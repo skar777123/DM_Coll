@@ -1,0 +1,22 @@
+# Blind Spot Detection System — Python Dependencies
+# Install on Raspberry Pi 4B with:
+#   pip install -r requirements.txt
+
+# ── Core ────────────────────────────────────────────────────
+flask==3.0.3
+flask-socketio==5.3.6
+python-socketio==5.11.2
+python-engineio==4.9.1
+eventlet==0.35.2             # async mode for flask-socketio
+
+# ── Hardware (Raspberry Pi only) ────────────────────────────
+RPi.GPIO==0.7.1              # GPIO control (Pi only, skip on PC)
+pyserial==3.5                # ESP32-CAM UART communication
+
+# ── Vision / AI ─────────────────────────────────────────────
+opencv-python-headless==4.9.0.80   # Computer vision (headless — no GUI)
+ultralytics==8.2.18                # YOLOv8 object detection
+numpy==1.26.4
+
+# ── Utilities ───────────────────────────────────────────────
+Pillow==10.3.0               # Image processing helpers

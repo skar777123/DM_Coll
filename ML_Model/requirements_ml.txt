@@ -1,0 +1,30 @@
+# ML pipeline dependencies for BlindSpotGuard
+# Install: pip install -r ML_Model/requirements_ml.txt
+
+# ── Deep Learning ─────────────────────────────────────────────
+torch==2.3.0                  # PyTorch (CPU build for Pi)
+torchvision==0.18.0
+
+# ── YOLOv8 ───────────────────────────────────────────────────
+ultralytics==8.2.18           # YOLOv8 object detection
+
+# ── Data / ML utilities ───────────────────────────────────────
+numpy==1.26.4
+scikit-learn==1.5.0
+joblib==1.4.2
+
+# ── Visualisation ─────────────────────────────────────────────
+matplotlib==3.9.0
+
+# ── Data download (optional) ──────────────────────────────────
+fiftyone==0.23.8              # Auto COCO download (optional)
+
+# ── Export / Inference ────────────────────────────────────────
+onnxruntime==1.18.0           # ONNX inference on Pi
+onnx==1.16.0                  # ONNX export support
+
+# ── TFLite (if using INT8 model on Pi) ───────────────────────
+# tflite-runtime==2.14.0      # Uncomment for Pi TFLite inference
+
+# ── OpenCV (already in main requirements.txt) ─────────────────
+opencv-python-headless==4.9.0.80

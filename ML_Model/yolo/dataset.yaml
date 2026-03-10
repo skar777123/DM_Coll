@@ -1,0 +1,38 @@
+# ML_Model/yolo/dataset.yaml
+# ─────────────────────────────────────────────────────────────
+# YOLOv8 Dataset Configuration — BlindSpotGuard
+#
+# Classes: Vehicle types relevant to blind-spot detection
+# Dataset structure expected:
+#
+#   ML_Model/yolo/dataset/
+#     images/
+#       train/   *.jpg
+#       val/     *.jpg
+#       test/    *.jpg
+#     labels/
+#       train/   *.txt  (YOLO format: class cx cy w h)
+#       val/     *.txt
+#       test/    *.txt
+#
+# Label format (YOLO normalized):
+#   <class_id> <cx> <cy> <width> <height>
+#   All values in [0,1] relative to image size.
+# ─────────────────────────────────────────────────────────────
+
+path: ML_Model/yolo/dataset    # root dir (relative to project root)
+train: images/train
+val:   images/val
+test:  images/test
+
+# Number of classes
+nc: 6
+
+# Class names (matching config.py CAMERA target_classes order)
+names:
+  0: car
+  1: truck
+  2: motorcycle
+  3: bus
+  4: person
+  5: bicycle
