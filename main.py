@@ -137,6 +137,19 @@ def main():
     _ultra_manager.start()
 
     log.info("[2/5] Initialising cameras…")
+    try:
+        from sensors.scanner import discover_esp32_cameras
+        from config import CAMERA_PORTS
+        discovered_urls = discover_esp32_cameras()
+        if discovered_urls:
+            log.info("Applying dynamically discovered camera URLs...")
+            for pos, url in discovered_urls.items():
+                if pos in CAMERA_PORTS:
+                    CAMERA_PORTS[pos]["url"] = url
+                    log.info("  %s -> %s", pos, url)
+    except Exception as exc:
+        log.warning("IP Auto-discovery failed: %s", exc)
+
     _cam_manager = CameraManager()
     _cam_manager.start()
     time.sleep(0.5)   # Give camera threads time to connect

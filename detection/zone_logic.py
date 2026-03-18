@@ -187,12 +187,12 @@ class ZoneEvaluator:
         else:
             # ── Intelligent Alerting Logic ─────────────────────────────────
             if vision_active:
-                # AI is working: ONLY alert if it's a MOVING VEHICLE
-                if is_vehicle and is_moving and distance_cm <= ZONE["caution"]:
-                    if distance_cm <= ZONE["critical"]:
-                        zone = "critical"
-                    else:
-                        zone = "caution"
+                # AI is working: User explicitly wants CRITICAL ONLY if:
+                # 1. It is a vehicle
+                # 2. It is coming fast (cam_threat == True)
+                # 3. It is in the unsafe zone (distance_cm <= ZONE["critical"])
+                if is_vehicle and cam_threat and distance_cm <= ZONE["critical"]:
+                    zone = "critical"
                 else:
                     zone = "safe"
             else:

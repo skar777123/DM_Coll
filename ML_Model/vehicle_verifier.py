@@ -61,35 +61,25 @@ class UnifiedVehicleThreatEngine(MLThreatEngine):
             p_zone = ml_zones[i] if (ml_zones and i < len(ml_zones)) else "safe"
             ttc    = ml_ttcs[i]  if (ml_ttcs  and i < len(ml_ttcs))  else 999.0
 
-            # Only 'detect and tell' if a vehicle is identified
-            if is_v:
-                if dist < ZONE["critical"]:
-                    zone = "critical"
-                elif dist < ZONE["caution"]:
-                    zone = "caution"
-                
-                # Further refine with ML predictions (TTC / LSTM)
-                if ttc <= THRESHOLDS["ttc_critical"]:
-                    zone = "critical"
-                elif ttc <= THRESHOLDS["ttc_caution"] or p_zone != "safe":
-                    # Elevate to ML-suggested zone if it's more severe
-                    if p_zone == "critical":
-                        zone = "critical"
-                    elif p_zone == "caution" and zone == "safe":
-                        zone = "caution"
-                
-                # Fast approach check (from ultrasonic velocity)
-                col = i * SENSOR_FEATURES
-                snap = self._history.latest_snap
-                vel = snap[col + 1] * 400.0 if col + 1 < len(snap) else 0.0
-                if vel > 150.0 and dist < ZONE["caution"]:
-                    zone = "critical" if dist < 120.0 else "caution"
+            # User requirement: Only critical if vehicle is coming fast and inside unsafe zone
+            # Otherwise SAFE.
+            
+            # Fast approach from either camera threat or ultrasonic velocity:
+            c_threat = bool(cam_thr[i])
+            col = i * SENSOR_FEATURES
+            snap = self._history.latest_snap
+            vel = snap[col + 1] * 400.0 if col + 1 < len(snap) else 0.0
+            u_threat = vel > 150.0
+            
+            # Or if ML TTC implies crash is imminent
+            ml_threat = (ttc <= THRESHOLDS["ttc_critical"] or p_zone == "critical")
+            
+            is_fast_approach = c_threat or u_threat or ml_threat
+            
+            if is_v and is_fast_approach and dist <= ZONE["critical"]:
+                zone = "critical"
             else:
-                # If NOT a vehicle, only alert if it's an immediate collision risk (< 40cm)
-                if dist < 40.0:
-                    zone = "critical"
-                else:
-                    zone = "safe"
+                zone = "safe"
             
             final_zones.append(zone)
 
