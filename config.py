@@ -42,25 +42,33 @@ MOTOR_PINS = {
 }
 
 # ─────────────────────────────────────────────────────────────
-#  ESP32-CAM SERIAL UART PORTS
+#  ESP32-CAM CONFIGURATION
+#  
+#  Set static IPs on each ESP32-CAM to prevent IP changes.
+#  See ESP32_CAM_Sketches/blindspot_cam.ino for the Arduino code.
+#
+#  If static IPs are not set, the scanner will try mDNS hostnames:
+#    blindspot-left.local, blindspot-right.local, blindspot-rear.local
+#
+#  As a last resort, nmap scans the subnet and queries /id endpoint.
 # ─────────────────────────────────────────────────────────────
 
 CAMERA_PORTS = {
     "left":  {
         "port":  "/dev/ttyAMA0",
-        "url":   "http://10.132.20.188/stream",
+        "url":   "http://192.168.1.181/stream",   # Static IP (recommended)
         "baud":  115200,
         "label": "Left Camera",
     },
     "right": {
         "port":  "/dev/ttyAMA4",
-        "url":   "http://10.132.20.101/stream",
+        "url":   "http://192.168.1.182/stream",   # Static IP (recommended)
         "baud":  115200,
         "label": "Right Camera",
     },
     "rear":  {
         "port":  "/dev/ttyAMA2",
-        "url":   "http://10.132.20.209/stream",
+        "url":   "http://192.168.1.183/stream",   # Static IP (recommended)
         "baud":  115200,
         "label": "Rear Camera",
     },

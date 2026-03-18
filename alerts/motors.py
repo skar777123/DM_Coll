@@ -155,12 +155,12 @@ class MotorController:
     # ── Semantic Alert Methods ────────────────────────────────────────────────
 
     def left_threat(self) -> None:
+        """Left motor pulses for left collision threat."""
         self._motors["left"].pulse()
-        self._motors["right"].off()
 
     def right_threat(self) -> None:
+        """Right motor pulses for right collision threat."""
         self._motors["right"].pulse()
-        self._motors["left"].off()
 
     def rear_threat(self) -> None:
         """Both motors pulse for rear collision threat."""

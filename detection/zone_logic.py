@@ -283,16 +283,23 @@ class ZoneEvaluator:
             # LEDs — per direction
             self._leds.apply(direction, dir_state.led_mode)
 
-        # Motors — semantic grouping (rear threat → both motors)
-        left_critical  = state.left.zone  == "critical"
-        right_critical = state.right.zone == "critical"
-        rear_critical  = state.rear.zone  == "critical"
+        # Motors — semantic grouping
+        # We process each motor independently to allow simultaneous side alerts
+        left_crit  = (state.left.zone == "critical")
+        right_crit = (state.right.zone == "critical")
+        rear_crit  = (state.rear.zone == "critical")
 
-        if rear_critical:
-            self._motors.rear_threat()       # both motors pulse
-        elif left_critical:
-            self._motors.left_threat()
-        elif right_critical:
-            self._motors.right_threat()
+        # Rear critical → pulses both motors
+        if rear_crit:
+            self._motors.rear_threat()
         else:
-            self._motors.all_off()
+            # Handle sides independently
+            if left_crit:
+                self._motors.left_threat()
+            else:
+                self._motors.apply("left", "off")
+
+            if right_crit:
+                self._motors.right_threat()
+            else:
+                self._motors.apply("right", "off")

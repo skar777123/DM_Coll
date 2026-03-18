@@ -19,6 +19,7 @@ WS   /socket.io     → Real-time push events
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -115,20 +116,45 @@ def api_override():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  JSON Sanitizer — converts numpy types to native Python types
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sanitize(obj):
+    """
+    Recursively convert numpy/non-standard types to JSON-serializable types.
+    Fixes: 'Object of type bool_ is not JSON serializable'
+    """
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_sanitize(v) for v in obj]
+    elif hasattr(obj, 'item'):
+        # numpy scalar types (bool_, int64, float32, etc.) have .item()
+        return obj.item()
+    elif isinstance(obj, bytes):
+        return obj.decode('utf-8', errors='replace')
+    return obj
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  WebSocket Events
 # ─────────────────────────────────────────────────────────────────────────────
 
 @socketio.on("connect")
-def on_connect():
+def on_connect(*args, **kwargs):
+    """Accepts optional auth parameter from newer Flask-SocketIO versions."""
     log.info("Dashboard client connected.")
-    if _evaluator:
-        emit("state_update", _evaluator.state.to_dict())
-    # Send initial camera frames
-    if _camera_manager:
-        frames = _camera_manager.get_all_frames()
-        for pos, frame in frames.items():
-            if frame and frame.frame_b64:
-                emit("camera_frame", frame.to_dict())
+    try:
+        if _evaluator:
+            emit("state_update", _sanitize(_evaluator.state.to_dict()))
+        # Send initial camera frames
+        if _camera_manager:
+            frames = _camera_manager.get_all_frames()
+            for pos, frame in frames.items():
+                if frame and frame.frame_b64:
+                    emit("camera_frame", _sanitize(frame.to_dict()))
+    except Exception as exc:
+        log.error("Error in on_connect: %s", exc)
 
 
 @socketio.on("disconnect")
