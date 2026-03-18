@@ -24,12 +24,7 @@ import time
 from collections import deque
 from typing import Dict, Optional
 
-try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
-except ImportError:
-    GPIO_AVAILABLE = False
-    logging.warning("RPi.GPIO not found — running in SIMULATION mode.")
+import RPi.GPIO as GPIO
 
 from config import ULTRASONIC_PINS, ULTRASONIC
 
@@ -42,24 +37,6 @@ _SPEED        = ULTRASONIC["speed_of_sound_cmps"]
 _TIMEOUT      = ULTRASONIC["timeout_s"]
 _AVG_N        = ULTRASONIC["readings_per_avg"]
 _POLL_INTERVAL= ULTRASONIC["polling_interval_s"]
-
-
-class _SensorSimulator:
-    """Returns plausible simulated distances when GPIO is unavailable."""
-
-    import random as _random
-
-    def __init__(self, label: str) -> None:
-        self._label = label
-        self._base  = 250.0   # cm
-        self._trend = 0.0
-
-    def read_raw(self) -> float:
-        import random
-        self._trend += random.uniform(-5, 5)
-        self._trend  = max(-80, min(80, self._trend))
-        dist = self._base + self._trend + random.uniform(-3, 3)
-        return max(5.0, min(_MAX_DIST, dist))
 
 
 class UltrasonicSensor:
@@ -84,13 +61,11 @@ class UltrasonicSensor:
         self._running  = False
         self._thread: Optional[threading.Thread] = None
         self._history: deque[float] = deque(maxlen=_AVG_N)
-        self._sim      = _SensorSimulator(label) if not GPIO_AVAILABLE else None
 
-        if GPIO_AVAILABLE:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setwarnings(False)
-            GPIO.setup(trig, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(echo, GPIO.IN)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setwarnings(False)
+        GPIO.setup(trig, GPIO.OUT, initial=GPIO.LOW)
+        GPIO.setup(echo, GPIO.IN)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -124,8 +99,10 @@ class UltrasonicSensor:
         self._running = False
         if self._thread:
             self._thread.join(timeout=1.0)
-        if GPIO_AVAILABLE:
+        try:
             GPIO.cleanup([self.trig, self.echo])
+        except Exception:
+            pass
         log.info("Sensor [%s] stopped.", self.name)
 
     # ── Internal ──────────────────────────────────────────────────────────────
@@ -140,9 +117,6 @@ class UltrasonicSensor:
             time.sleep(_POLL_INTERVAL)
 
     def _read_once(self) -> Optional[float]:
-        if not GPIO_AVAILABLE:
-            return self._sim.read_raw()
-
         try:
             # 1. Trigger pulse
             GPIO.output(self.trig, GPIO.LOW)

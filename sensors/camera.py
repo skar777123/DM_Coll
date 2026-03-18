@@ -29,12 +29,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-try:
-    import serial
-    SERIAL_AVAILABLE = True
-except ImportError:
-    SERIAL_AVAILABLE = False
-    logging.warning("pyserial not found — cameras in SIMULATION mode.")
+import serial
 
 # Ultralytics and CV2 moved to local imports/checks to avoid SIGILL on ARM
 YOLO_AVAILABLE = True # Assume true, check at runtime
@@ -103,36 +98,6 @@ class CameraFrame:
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-class _CameraSimulator:
-    """Generates synthetic frames (solid colour + text) when serial/URL unavailable."""
-
-    def __init__(self, position: str) -> None:
-        self.position = position
-        self._frame_count = 0
-        self._colours = {"left": (40, 10, 80), "right": (10, 40, 80), "rear": (10, 80, 40)}
-
-    def next_frame(self) -> CameraFrame:
-        self._frame_count += 1
-        frame = CameraFrame(position=self.position)
-
-        if CV2_AVAILABLE:
-            h, w = CAMERA["frame_height"], CAMERA["frame_width"]
-            img = np.zeros((h, w, 3), dtype=np.uint8)
-            colour = self._colours.get(self.position, (60, 60, 60))
-            img[:] = colour  # solid tint
-            cv2.putText(img, f"{self.position.upper()} CAM", (10, h // 2 - 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (220, 220, 220), 2)
-            cv2.putText(img, f"Frame #{self._frame_count}", (10, h // 2 + 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
-            cv2.putText(img, "SIMULATION MODE", (10, h - 12),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 200, 255), 1)
-            _, buf = cv2.imencode(".jpg", img)
-            jpeg = buf.tobytes()
-            frame.raw_jpeg  = jpeg
-            frame.frame_b64 = base64.b64encode(jpeg).decode()
-        return frame
-
-
 class CameraStream:
     """
     Reads MJPEG frames from an ESP32-CAM via UART or HTTP Stream.
@@ -151,7 +116,6 @@ class CameraStream:
         self._latest: Optional[CameraFrame] = None
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._sim     = _CameraSimulator(position) if not (SERIAL_AVAILABLE or self.url) else None
         self._prev_sizes: List[int] = []     # for approach-speed estimation
         self._prev_detections: List[Detection] = []
 
@@ -186,10 +150,6 @@ class CameraStream:
             self._url_loop()
             return
 
-        if not SERIAL_AVAILABLE:
-            self._sim_loop()
-            return
-
         buf = b""
         try:
             with serial.Serial(self.port, self.baud, timeout=1.0) as ser:
@@ -211,9 +171,7 @@ class CameraStream:
                         with self._lock:
                             self._latest = frame
         except serial.SerialException as exc:
-            log.error("[Camera %s] serial error: %s  → switching to simulator.", self.position, exc)
-            self._sim = _CameraSimulator(self.position)
-            self._sim_loop()
+            log.error("[Camera %s] serial error: %s", self.position, exc)
 
     def _url_loop(self) -> None:
         """Reads frames from an HTTP MJPEG stream or polls single images with a persistent session."""
@@ -291,14 +249,6 @@ class CameraStream:
                     time.sleep(2.0)
         
         session.close()
-
-    def _sim_loop(self) -> None:
-        interval = 1.0 / max(1, CAMERA["fps"])
-        while self._running:
-            frame = self._sim.next_frame()
-            with self._lock:
-                self._latest = frame
-            time.sleep(interval)
 
     def _process_jpeg(self, jpeg: bytes) -> CameraFrame:
         frame = CameraFrame(
