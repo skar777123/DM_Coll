@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Blind Spot Detection System — Live Dashboard</title>
-  <meta name="description" content="Real-time blind spot monitoring dashboard for bike/vehicle safety using ESP32-CAM and HC-SR04 sensors on Raspberry Pi 4B." />
+  <title>BlindSpotGuard — Live Dashboard</title>
+  <meta name="description" content="Real-time blind spot monitoring dashboard for bike/vehicle safety." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -24,221 +24,163 @@
         </div>
         <div class="brand-text">
           <span class="brand-name">BlindSpot<span class="accent">Guard</span></span>
-          <span class="brand-sub">Raspberry Pi 4B · ESP32-CAM · HC-SR04</span>
+          <span class="brand-sub">Pi 4B • Live Monitoring</span>
         </div>
       </div>
-      <div class="header-status">
-        <div class="system-badge" id="systemBadge">
-          <span class="pulse-dot" id="pulseDot"></span>
-          <span id="systemStatusText">CONNECTING…</span>
-        </div>
-        <div class="clock" id="clockDisplay">--:--:--</div>
+
+      <div class="system-badge" id="systemBadge">
+        <span class="pulse-dot" id="pulseDot"></span>
+        <span id="systemStatusText">CONNECTING…</span>
       </div>
+
+      <div class="clock" id="clockDisplay">--:--:--</div>
     </div>
   </header>
 
-  <!-- ═══════════════════════════ MAIN ════════════════════════════ -->
-  <main class="main">
-
-    <!-- ── Top Row: Sensor Zones ── -->
-    <section class="sensor-row">
-
-      <!-- LEFT -->
-      <div class="zone-card" id="card-left" data-direction="left">
-        <div class="zone-header">
-          <div class="zone-icon">←</div>
-          <div class="zone-label">LEFT BLINDSPOT</div>
-        </div>
-        <div class="zone-distance" id="dist-left">--- cm</div>
-        <div class="zone-bar-wrap">
-          <div class="zone-bar" id="bar-left"></div>
-        </div>
-        <div class="zone-badge" id="badge-left">SAFE</div>
-        <div class="zone-indicators">
-          <div class="indicator-item">
-            <div class="ind-dot led-dot" id="led-left"></div>
-            <span>LED</span>
-          </div>
-          <div class="indicator-item">
-            <div class="ind-dot motor-dot" id="motor-left"></div>
-            <span>MOTOR</span>
-          </div>
-          <div class="indicator-item">
-            <div class="ind-dot cam-dot" id="cam-threat-left"></div>
-            <span>CAM</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- VEHICLE OVERVIEW (Centre) -->
-      <div class="vehicle-overview">
-        <div class="overview-title">VEHICLE OVERVIEW</div>
-        <div class="vehicle-diagram">
-          <div class="threat-arc arc-left"  id="arc-left"></div>
-          <div class="threat-arc arc-right" id="arc-right"></div>
-          <div class="threat-arc arc-rear"  id="arc-rear"></div>
-          <div class="bike-body">
-            <div class="bike-top"></div>
-            <div class="bike-wheel bike-wheel-front"></div>
-            <div class="bike-wheel bike-wheel-rear"></div>
-            <div class="rider"></div>
-          </div>
-        </div>
-        <div class="overview-legend">
-          <span class="leg safe">● Safe</span>
-          <span class="leg caution">● Caution</span>
-          <span class="leg critical">● Critical</span>
-        </div>
-      </div>
-
-      <!-- RIGHT -->
-      <div class="zone-card" id="card-right" data-direction="right">
-        <div class="zone-header">
-          <div class="zone-icon">→</div>
-          <div class="zone-label">RIGHT BLINDSPOT</div>
-        </div>
-        <div class="zone-distance" id="dist-right">--- cm</div>
-        <div class="zone-bar-wrap">
-          <div class="zone-bar" id="bar-right"></div>
-        </div>
-        <div class="zone-badge" id="badge-right">SAFE</div>
-        <div class="zone-indicators">
-          <div class="indicator-item">
-            <div class="ind-dot led-dot" id="led-right"></div>
-            <span>LED</span>
-          </div>
-          <div class="indicator-item">
-            <div class="ind-dot motor-dot" id="motor-right"></div>
-            <span>MOTOR</span>
-          </div>
-          <div class="indicator-item">
-            <div class="ind-dot cam-dot" id="cam-threat-right"></div>
-            <span>CAM</span>
-          </div>
-        </div>
-      </div>
-
-    </section>
-
-    <!-- ── REAR SENSOR + Event Log ── -->
-    <section class="mid-row">
-
-      <!-- REAR ZONE -->
-      <div class="zone-card zone-card--rear" id="card-rear" data-direction="rear">
-        <div class="zone-header">
-          <div class="zone-icon">↓</div>
-          <div class="zone-label">REAR SENSOR</div>
-        </div>
-        <div class="rear-content">
-          <div class="zone-distance" id="dist-rear">--- cm</div>
-          <div class="zone-bar-wrap">
-            <div class="zone-bar" id="bar-rear"></div>
-          </div>
-          <div class="zone-badge" id="badge-rear">SAFE</div>
-          <div class="zone-indicators">
-            <div class="indicator-item">
-              <div class="ind-dot led-dot" id="led-rear"></div>
-              <span>LED</span>
-            </div>
-            <div class="indicator-item">
-              <div class="ind-dot motor-dot" id="motor-rear-l"></div>
-              <span>LEFT MTR</span>
-            </div>
-            <div class="indicator-item">
-              <div class="ind-dot motor-dot" id="motor-rear-r"></div>
-              <span>RIGHT MTR</span>
-            </div>
-            <div class="indicator-item">
-              <div class="ind-dot cam-dot" id="cam-threat-rear"></div>
-              <span>CAM</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- EVENT LOG -->
-      <div class="event-log-card">
+  <!-- ═══════════════════════════ MAIN DASHBOARD ════════════════════════════ -->
+  <main class="dashboard-container">
+    <div class="primary-grid">
+      
+      <!-- LEFT MONITOR -->
+      <section class="monitor-card" id="card-left" data-direction="left">
         <div class="card-header">
-          <span class="card-title">Event Log</span>
-          <button class="btn-clear" id="btnClearLog">Clear</button>
+          <span class="label">← LEFT BLINDSPOT</span>
+          <span class="zone-badge" id="badge-left">SAFE</span>
         </div>
-        <div class="event-log" id="eventLog">
-          <div class="log-entry log-info">System initialising…</div>
-        </div>
-      </div>
-
-      <!-- STATS -->
-      <div class="stats-card">
-        <div class="card-header"><span class="card-title">System Stats</span></div>
-        <div class="stats-grid">
-          <div class="stat-item">
-            <div class="stat-value" id="statUpdates">0</div>
-            <div class="stat-label">Updates/min</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-value" id="statPing">--</div>
-            <div class="stat-label">Latency (ms)</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-value" id="statAlerts">0</div>
-            <div class="stat-label">Total Alerts</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-value" id="statUptime">00:00</div>
-            <div class="stat-label">Uptime</div>
-          </div>
-        </div>
-        <!-- Manual Test -->
-        <div class="card-header" style="margin-top:1rem;"><span class="card-title">Manual Test</span></div>
-        <div class="test-buttons">
-          <button class="btn-test" id="testLeft"   onclick="testOverride('left',  'critical')">LEFT</button>
-          <button class="btn-test" id="testRight"  onclick="testOverride('right', 'critical')">RIGHT</button>
-          <button class="btn-test" id="testRear"   onclick="testOverride('rear',  'critical')">REAR</button>
-          <button class="btn-test btn-reset" id="testReset" onclick="testOverride('all','safe')">RESET</button>
-        </div>
-      </div>
-
-    </section>
-
-    <!-- ── Camera Feeds Row ── -->
-    <section class="camera-row">
-      <div class="cam-card" id="camCardLeft">
-        <div class="cam-header">
-          <span class="cam-label">LEFT CAM — ESP32-CAM (UART0)</span>
-          <span class="cam-status" id="camStatusLeft">●</span>
-        </div>
-        <div class="cam-frame-wrap">
-          <img class="cam-frame" id="camLeft" src="/static/img/cam_placeholder.svg" alt="Left camera feed" />
+        <div class="cam-feed">
+          <img class="cam-frame" id="camLeft" src="/static/img/cam_placeholder.svg" alt="Left camera" />
           <div class="cam-overlay" id="camOverlayLeft">NO SIGNAL</div>
+          <div class="threat-glow"></div>
+        </div>
+        <div class="sensor-data">
+          <div class="dist-wrap">
+            <span class="dist-val" id="dist-left">--- cm</span>
+            <div class="progress-bar-wrap"><div class="progress-bar" id="bar-left"></div></div>
+          </div>
+          <div class="indicator-grid">
+            <div class="ind-dot led-dot" id="led-left" title="LED Alert">L</div>
+            <div class="ind-dot motor-dot" id="motor-left" title="Haptic Motor">M</div>
+            <div class="ind-dot cam-dot" id="cam-threat-left" title="AI Camera">C</div>
+            <div class="ind-dot vehicle-dot" id="is-vehicle-left" title="Vehicle Detected">V</div>
+            <div class="ind-dot moving-dot" id="is-moving-left" title="Object Moving">D</div>
+          </div>
         </div>
         <div class="cam-detections" id="camDetLeft">—</div>
-      </div>
+      </section>
 
-      <div class="cam-card" id="camCardRight">
-        <div class="cam-header">
-          <span class="cam-label">RIGHT CAM — ESP32-CAM (UART4)</span>
-          <span class="cam-status" id="camStatusRight">●</span>
+      <!-- CENTRAL HUB -->
+      <section class="central-hub">
+        <div class="vehicle-overview">
+          <div class="overview-title">VEHICLE RADAR</div>
+          <div class="vehicle-diagram">
+            <div class="threat-arc arc-left"  id="arc-left"></div>
+            <div class="threat-arc arc-right" id="arc-right"></div>
+            <div class="threat-arc arc-rear"  id="arc-rear"></div>
+            <div class="bike-body">
+              <div class="bike-top"></div>
+              <div class="bike-wheel bike-wheel-front"></div>
+              <div class="bike-wheel bike-wheel-rear"></div>
+              <div class="rider"></div>
+            </div>
+          </div>
+          <div class="overview-legend">
+            <span class="leg safe">SAFE</span>
+            <span class="leg caution">CAUTION</span>
+            <span class="leg critical">CRITICAL</span>
+          </div>
         </div>
-        <div class="cam-frame-wrap">
-          <img class="cam-frame" id="camRight" src="/static/img/cam_placeholder.svg" alt="Right camera feed" />
+      </section>
+
+      <!-- RIGHT MONITOR -->
+      <section class="monitor-card" id="card-right" data-direction="right">
+        <div class="card-header">
+          <span class="label">RIGHT BLINDSPOT →</span>
+          <span class="zone-badge" id="badge-right">SAFE</span>
+        </div>
+        <div class="cam-feed">
+          <img class="cam-frame" id="camRight" src="/static/img/cam_placeholder.svg" alt="Right camera" />
           <div class="cam-overlay" id="camOverlayRight">NO SIGNAL</div>
+          <div class="threat-glow"></div>
+        </div>
+        <div class="sensor-data">
+          <div class="dist-wrap">
+            <span class="dist-val" id="dist-right">--- cm</span>
+            <div class="progress-bar-wrap"><div class="progress-bar" id="bar-right"></div></div>
+          </div>
+          <div class="indicator-grid">
+            <div class="ind-dot led-dot" id="led-right" title="LED Alert">L</div>
+            <div class="ind-dot motor-dot" id="motor-right" title="Haptic Motor">M</div>
+            <div class="ind-dot cam-dot" id="cam-threat-right" title="AI Camera">C</div>
+            <div class="ind-dot vehicle-dot" id="is-vehicle-right" title="Vehicle Detected">V</div>
+            <div class="ind-dot moving-dot" id="is-moving-right" title="Object Moving">D</div>
+          </div>
         </div>
         <div class="cam-detections" id="camDetRight">—</div>
-      </div>
+      </section>
 
-      <div class="cam-card" id="camCardRear">
-        <div class="cam-header">
-          <span class="cam-label">REAR CAM — ESP32-CAM (UART2)</span>
-          <span class="cam-status" id="camStatusRear">●</span>
+    </div>
+
+    <div class="secondary-grid">
+      
+      <!-- REAR MONITOR -->
+      <section class="monitor-card monitor-card--rear" id="card-rear" data-direction="rear">
+        <div class="card-header">
+          <span class="label">↓ REAR SENSOR</span>
+          <span class="zone-badge" id="badge-rear">SAFE</span>
         </div>
-        <div class="cam-frame-wrap">
-          <img class="cam-frame" id="camRear" src="/static/img/cam_placeholder.svg" alt="Rear camera feed" />
-          <div class="cam-overlay" id="camOverlayRear">NO SIGNAL</div>
+        <div class="rear-layout">
+          <div class="cam-feed">
+            <img class="cam-frame" id="camRear" src="/static/img/cam_placeholder.svg" alt="Rear camera" />
+            <div class="cam-overlay" id="camOverlayRear">NO SIGNAL</div>
+            <div class="threat-glow"></div>
+          </div>
+          <div class="sensor-data">
+            <div class="dist-wrap">
+              <span class="dist-val" id="dist-rear">--- cm</span>
+              <div class="progress-bar-wrap"><div class="progress-bar" id="bar-rear"></div></div>
+            </div>
+            <div class="indicator-grid">
+              <div class="ind-dot led-dot" id="led-rear" title="LED Alert">L</div>
+              <div class="ind-dot motor-dot" id="motor-rear-l" title="Left Motor">ML</div>
+              <div class="ind-dot motor-dot" id="motor-rear-r" title="Right Motor">MR</div>
+              <div class="ind-dot cam-dot" id="cam-threat-rear" title="AI Camera">C</div>
+              <div class="ind-dot vehicle-dot" id="is-vehicle-rear" title="Vehicle Detected">V</div>
+              <div class="ind-dot moving-dot" id="is-moving-rear" title="Object Moving">D</div>
+            </div>
+          </div>
         </div>
         <div class="cam-detections" id="camDetRear">—</div>
-      </div>
-    </section>
+      </section>
 
+      <!-- SYSTEM PANEL -->
+      <section class="system-panel">
+        
+        <div class="stats-row" id="statsRow">
+          <div class="stat-box"><span id="statUpdates">0</span><small>UPD/min</small></div>
+          <div class="stat-box"><span id="statPing">--</span><small>ms</small></div>
+          <div class="stat-box"><span id="statAlerts">0</span><small>ALERTS</small></div>
+          <div class="stat-box"><span id="statUptime">00:00</span><small>UPTIME</small></div>
+        </div>
+
+        <div class="event-log-container">
+          <div class="log-header">
+            <span>EVENT LOG</span>
+            <button id="btnClearLog">Clear</button>
+          </div>
+          <div class="event-log" id="eventLog">
+            <div class="log-entry log-info">System initialising…</div>
+          </div>
+        </div>
+
+        <div class="manual-test">
+          <button class="btn-test" onclick="testOverride('left', 'critical')">LEFT</button>
+          <button class="btn-test" onclick="testOverride('right', 'critical')">RIGHT</button>
+          <button class="btn-test" onclick="testOverride('rear', 'critical')">REAR</button>
+          <button class="btn-test btn-reset" onclick="testOverride('all', 'safe')">RESET</button>
+        </div>
+      </section>
+
+    </div>
   </main>
 
   <!-- ═══════════════════════ ALERT BANNER ═══════════════════════ -->

@@ -35,12 +35,27 @@ from collections import deque
 from typing import TYPE_CHECKING, Dict, Optional
 
 import numpy as np
-import torch
-import torch.nn.functional as F
+from utils_safety import is_module_safe
+
+# Lazy torch imports to avoid SIGILL on startup
+torch = None
+F = None
+
+def _import_torch():
+    global torch, F
+    if torch is None:
+        if is_module_safe("torch"):
+            import torch as t
+            import torch.nn.functional as f
+            torch = t
+            F = f
+            return True
+        return False
+    return True
 
 if TYPE_CHECKING:
-    from warnings.leds   import LEDController
-    from warnings.motors import MotorController
+    from alerts.leds   import LEDController
+    from alerts.motors import MotorController
 
 from detection.zone_logic import ZoneEvaluator, SystemState, DirectionState
 from ML_Model.config_ml   import (
@@ -50,7 +65,8 @@ from ML_Model.config_ml   import (
 
 log = logging.getLogger(__name__)
 
-DEVICE = torch.device("cpu")
+# DEVICE will be set after torch is imported
+DEVICE = None
 DT     = 0.02   # 20 ms (50 Hz)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -129,6 +145,10 @@ class _YOLOInference:
         self._load()
 
     def _load(self) -> None:
+        if not is_module_safe("ultralytics"):
+            log.warning("YOLO (ultralytics) is unsafe or unavailable on this system — disabling YOLO.")
+            return
+
         try:
             from ultralytics import YOLO
             custom = PATHS.get("yolo_model", "ML_Model/saved_models/blindspot_yolo.pt")
@@ -171,6 +191,15 @@ class _YOLOInference:
             return []
 
 
+def _no_grad(func):
+    def wrapper(*args, **kwargs):
+        if torch is not None:
+            with torch.no_grad():
+                return func(*args, **kwargs)
+        else:
+            return func(*args, **kwargs)
+    return wrapper
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Main engine
 # ─────────────────────────────────────────────────────────────────────────────
@@ -190,9 +219,20 @@ class MLThreatEngine(ZoneEvaluator):
     def __init__(self, leds: "LEDController", motors: "MotorController") -> None:
         super().__init__(leds=leds, motors=motors)
         self._history = _SensorHistory()
-        self._scaler  = self._load_scaler()
-        self._lstm    = self._load_model("lstm")
-        self._fnet    = self._load_model("fusion")
+        
+        # Try to import torch before loading models
+        global DEVICE
+        if _import_torch():
+            DEVICE = torch.device("cpu")
+            self._scaler  = self._load_scaler()
+            self._lstm    = self._load_model("lstm")
+            self._fnet    = self._load_model("fusion")
+        else:
+            log.warning("PyTorch is unsafe or unavailable on this system — ML models disabled.")
+            self._scaler = None
+            self._lstm = None
+            self._fnet = None
+
         self._yolo    = _YOLOInference()
         log.info("MLThreatEngine ready  (LSTM=%s  FusionNet=%s  YOLO=%s)",
                  self._lstm is not None, self._fnet is not None, self._yolo._model is not None)
@@ -290,15 +330,39 @@ class MLThreatEngine(ZoneEvaluator):
 
         # ── Build SystemState ─────────────────────────────────────────────────
         new_state = SystemState(timestamp=time.time())
+        from config import ZONE
+
         for i, direction in enumerate(DIRS):
-            zone = final_zones[i]
+            dist = dists[i]
+            frame = camera_frames.get(direction)
+            is_v = frame.is_vehicle if frame else False
+            is_m = frame.is_moving if frame else False
+
+            # ── Apply USER FILTER: only alert if it is a MOVING VEHICLE within 200cm ──
+            if is_v and is_m and dist <= ZONE["caution"]:
+                zone = final_zones[i]
+                # Double-check distance zone if ML didn't pick it up
+                if dist <= ZONE["critical"]: zone = "critical"
+                elif zone == "safe": zone = "caution"
+            else:
+                zone = "safe"
+
+            # ── Apply Overrides ─────────────────────────────────────────────
+            if direction in self._overrides:
+                zone = self._overrides[direction]
+                if zone == "critical": dist = min(dist, 50.0)
+                elif zone == "caution": dist = min(dist, 150.0)
+            
             led_mode   = {"safe": "off", "caution": "solid", "critical": "flash"}[zone]
             motor_mode = "pulse" if zone == "critical" else "off"
+            
             ds = DirectionState(
                 direction=direction,
                 zone=zone,
-                distance_cm=dists[i],
+                distance_cm=dist,
                 camera_threat=bool(cam_thr[i]),
+                is_vehicle=is_v,
+                is_moving=is_m,
                 led_mode=led_mode,
                 motor_mode=motor_mode,
             )
@@ -310,21 +374,26 @@ class MLThreatEngine(ZoneEvaluator):
 
     # ── LSTM prediction ───────────────────────────────────────────────────────
 
-    @torch.no_grad()
+    @_no_grad
     def _lstm_predict(self) -> tuple[list[str], list[float]]:
         seq  = self._history.get_sequence()   # [T, F]
         seq  = self._scale_sequence(seq)
         x    = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(DEVICE)
         probs, ttc = self._lstm.predict(x)
         zones = self._lstm.zone_from_probs(probs)
-        return zones * N_SENSORS if len(zones) == 1 else zones, ttc.tolist()
+        
+        # Broadcast global prediction to all sensors if only one result is returned
+        ttc_list = ttc.tolist()
+        if len(zones) == 1:
+            return zones * N_SENSORS, ttc_list * N_SENSORS
+        return zones, ttc_list
 
     # Each direction shares the same sequence → the model predicts per-batch
     # But we pass one unified feature vector per timestep (all 3 sensors together).
     # So the output is a SINGLE zone for the most-threatening sensor.
     # We post-process: assign that threat to the most-distant sensor from safe.
 
-    @torch.no_grad()
+    @_no_grad
     def _fnet_predict(self) -> tuple[list[str], list[float]]:
         snap  = self._history.latest_snap    # [INPUT_FEATURES]
         snap_s = self._scale(snap)

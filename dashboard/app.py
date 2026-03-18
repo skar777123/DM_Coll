@@ -79,7 +79,11 @@ def api_override():
     data = request.get_json(silent=True) or {}
     direction = data.get("direction", "left")
     zone      = data.get("zone", "critical")
-    log.info("Manual override: direction=%s zone=%s", direction, zone)
+    log.info("Manual override request: direction=%s zone=%s", direction, zone)
+    
+    if _evaluator:
+        _evaluator.set_override(direction, zone)
+        
     socketio.emit("override", {"direction": direction, "zone": zone})
     return jsonify({"ok": True, "direction": direction, "zone": zone})
 
@@ -118,7 +122,7 @@ def _emit_loop():
     """Push system state and camera frames to all clients at ~20 Hz."""
     global _running
     interval = DASHBOARD["emit_rate"]
-    frame_interval = 0.1   # cameras at 10 Hz (less bandwidth)
+    # Sync camera emit with DASHBOARD["emit_rate"] for smoother streaming
     last_cam = 0.0
 
     while _running:
@@ -128,10 +132,11 @@ def _emit_loop():
                 socketio.emit("state_update", state_dict)
 
             now = time.time()
-            if _camera_manager and (now - last_cam) >= frame_interval:
+            if _camera_manager and (now - last_cam) >= interval:
                 frames = _camera_manager.get_all_frames()
                 for pos, frame in frames.items():
                     if frame and frame.frame_b64:
+                        # Only emit if it's a fresh frame to save bandwidth
                         socketio.emit("camera_frame", frame.to_dict())
                 last_cam = now
 

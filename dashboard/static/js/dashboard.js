@@ -93,7 +93,7 @@ function applyStateUpdate(data) {
     if (!d) return;
 
     const prevZone = getZone(dir);
-    setZone(dir, d.zone, d.distance_cm, d.camera_threat, d.led_mode, d.motor_mode);
+    setZone(dir, d.zone, d.distance_cm, d.camera_threat, d.led_mode, d.motor_mode, d.is_vehicle, d.is_moving, d.vision_active);
 
     if (d.zone === ZONE_CRITICAL && prevZone !== ZONE_CRITICAL) {
       anyCritical = true;
@@ -134,7 +134,7 @@ function getZone(dir) {
   return 'safe';
 }
 
-function setZone(dir, zone, distCm, camThreat, ledMode, motorMode) {
+function setZone(dir, zone, distCm, camThreat, ledMode, motorMode, isVehicle, isMoving, visionActive) {
   const card    = zoneEl('card-' + dir);
   const distEl  = zoneEl('dist-' + dir);
   const barEl   = zoneEl('bar-' + dir);
@@ -144,26 +144,25 @@ function setZone(dir, zone, distCm, camThreat, ledMode, motorMode) {
 
   // Card class
   card.className = card.className.replace(/zone-\w+/g, '').trim();
-  card.classList.add('zone-card', 'zone-' + zone);
-  if (dir === 'rear') card.classList.add('zone-card--rear');
+  card.classList.add('zone-' + zone);
+  // Ensure base classes are present
+  if (!card.classList.contains('monitor-card')) card.classList.add('monitor-card');
+  if (dir === 'rear' && !card.classList.contains('monitor-card--rear')) card.classList.add('monitor-card--rear');
 
   // Distance
-  if (distEl) distEl.textContent = distCm >= 400 ? '> 400 cm' : `${distCm.toFixed(1)} cm`;
   if (distEl) {
-    distEl.style.color = zone === ZONE_CRITICAL ? '#ff3d3d' : zone === ZONE_CAUTION ? '#ffb300' : '#e8edf8';
+    distEl.textContent = distCm >= 400 ? '> 400 cm' : `${distCm.toFixed(1)} cm`;
   }
 
-  // Progress bar (inverted: larger distance = smaller bar fill)
+  // Progress bar
   if (barEl) {
     const pct = Math.max(2, Math.min(100, ((400 - distCm) / 400) * 100));
     barEl.style.width = pct + '%';
-    barEl.style.background = zone === ZONE_CRITICAL ? '#ff3d3d' : zone === ZONE_CAUTION ? '#ffb300' : '#00e676';
   }
 
   // Badge
   if (badgeEl) {
     badgeEl.textContent = zone.toUpperCase();
-    badgeEl.className   = 'zone-badge' + (zone !== 'safe' ? ' badge-' + zone : '');
   }
 
   // Vehicle arc
@@ -179,16 +178,26 @@ function setZone(dir, zone, distCm, camThreat, ledMode, motorMode) {
   }
 
   // Motor indicator (left/right only — rear handled separately)
-  const motorDot = zoneEl('motor-' + dir);
-  if (motorDot) {
+  if (dir !== 'rear') {
     setIndicatorDot('motor-' + dir, motorMode === 'pulse' ? 'active-motor' : '');
   }
 
-  // Camera threat indicator
-  const camDot = zoneEl('cam-threat-' + dir);
-  if (camDot) {
-    setIndicatorDot('cam-threat-' + dir, camThreat ? 'active-cam' : '');
+  // Camera vision status indicator
+  let camClass = '';
+  if (camThreat) {
+    camClass = 'active-cam';
+  } else if (visionActive) {
+    camClass = 'vision-ok';
+  } else {
+    camClass = 'vision-off';
   }
+  setIndicatorDot('cam-threat-' + dir, camClass);
+  
+  // Vehicle indicator
+  setIndicatorDot('is-vehicle-' + dir, isVehicle ? 'active-vehicle' : '');
+  
+  // Moving indicator
+  setIndicatorDot('is-moving-' + dir, isMoving ? 'active-moving' : '');
 }
 
 function setIndicatorDot(id, extraClass) {
@@ -196,9 +205,11 @@ function setIndicatorDot(id, extraClass) {
   if (!el) return;
   el.className = 'ind-dot' + (extraClass ? ' ' + extraClass : '');
   // Preserve original type class
-  if (id.startsWith('led-'))         el.classList.add('led-dot');
-  else if (id.startsWith('motor-'))  el.classList.add('motor-dot');
-  else if (id.startsWith('cam-'))    el.classList.add('cam-dot');
+  if (id.startsWith('led-'))           el.classList.add('led-dot');
+  else if (id.startsWith('motor-'))    el.classList.add('motor-dot');
+  else if (id.startsWith('cam-'))      el.classList.add('cam-dot');
+  else if (id.startsWith('is-vehicle')) el.classList.add('vehicle-dot');
+  else if (id.startsWith('is-moving'))  el.classList.add('moving-dot');
 }
 
 /* ═══════════════════════ CAMERA FRAMES ════════════════════ */
@@ -213,8 +224,7 @@ function initCamRefs() {
     _camElements[pos].img     = document.getElementById('cam' + p);
     _camElements[pos].overlay = document.getElementById('camOverlay' + p);
     _camElements[pos].det     = document.getElementById('camDet' + p);
-    _camElements[pos].card    = document.getElementById('camCard' + p);
-    _camElements[pos].status  = document.getElementById('camStatus' + p);
+    _camElements[pos].card    = document.getElementById('card-' + pos);
   });
 }
 
@@ -228,12 +238,9 @@ function applyFrame(data) {
   if (data.frame_b64) {
     refs.img.src = 'data:image/jpeg;base64,' + data.frame_b64;
     if (refs.overlay) refs.overlay.classList.add('hidden');
-    if (refs.status) {
-      refs.status.className = 'cam-status ' + (data.threat ? 'threat' : 'active');
-    }
   }
 
-  // Threat border
+  // Threat border/glow
   if (refs.card) {
     refs.card.classList.toggle('threat-active', !!data.threat);
   }
@@ -241,10 +248,12 @@ function applyFrame(data) {
   // Detections
   if (refs.det && data.detections) {
     if (data.detections.length === 0) {
-      refs.det.innerHTML = '<span style="color:var(--text-dim)">No objects detected</span>';
+      refs.det.innerHTML = '<span style="color:var(--text-mute)">No objects</span>';
     } else {
       refs.det.innerHTML = data.detections
-        .map(d => `<span class="det-chip${data.threat ? ' threat' : ''}">${d.label} ${Math.round(d.confidence * 100)}%</span>`)
+        .map(d => {
+          return `<span class="det-chip">${d.label} ${Math.round(d.confidence * 100)}%</span>`;
+        })
         .join('');
     }
   }
@@ -345,6 +354,7 @@ function startSimulation() {
         zone, direction: dir,
         distance_cm: dist,
         camera_threat: zone === ZONE_CRITICAL && Math.random() > 0.4,
+        vision_active: true,
         led_mode:   zone === ZONE_CRITICAL ? 'flash' : zone === ZONE_CAUTION ? 'solid' : 'off',
         motor_mode: zone === ZONE_CRITICAL ? 'pulse' : 'off',
       };

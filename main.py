@@ -60,15 +60,15 @@ log = logging.getLogger("main")
 
 from sensors.ultrasonic   import UltrasonicManager
 from sensors.camera       import CameraManager
-from warnings.leds        import LEDController
-from warnings.motors      import MotorController
+from alerts.leds        import LEDController
+from alerts.motors      import MotorController
 from detection.zone_logic import ZoneEvaluator
 import dashboard.app as dashboard_app
 
 
 def _build_evaluator(leds, motors):
     """
-    Use MLThreatEngine (LSTM + FusionNet + YOLO) when models are available.
+    Use UnifiedVehicleThreatEngine (YOLO + LSTM) when models are available.
     Falls back to the simple rule-based ZoneEvaluator otherwise.
     """
     lstm_path = "ML_Model/saved_models/threat_lstm.pt"
@@ -77,12 +77,12 @@ def _build_evaluator(leds, motors):
 
     if models_trained:
         try:
-            from ML_Model.inference import MLThreatEngine
-            engine = MLThreatEngine(leds=leds, motors=motors)
-            log.info("MLThreatEngine loaded  ✔  (LSTM + FusionNet + YOLO active)")
+            from ML_Model.vehicle_verifier import UnifiedVehicleThreatEngine
+            engine = UnifiedVehicleThreatEngine(leds=leds, motors=motors)
+            log.info("UnifiedVehicleThreatEngine loaded  ✔  (Two-Stage: YOLO -> LSTM active)")
             return engine
         except Exception as exc:
-            log.warning("MLThreatEngine failed to load (%s) — falling back to rule-based.", exc)
+            log.warning("UnifiedVehicleThreatEngine failed to load (%s) — falling back to rule-based.", exc)
 
     log.info("Using rule-based ZoneEvaluator (train ML models to upgrade).")
     return ZoneEvaluator(leds=leds, motors=motors)

@@ -47,17 +47,20 @@ MOTOR_PINS = {
 
 CAMERA_PORTS = {
     "left":  {
-        "port":  "/dev/ttyS0",   # UART0 → Pin 10 (RXD) / Pin 8 (TXD)
+        "port":  "/dev/ttyAMA0",
+        "url":   "http://10.132.20.188/stream",
         "baud":  115200,
         "label": "Left Camera",
     },
     "right": {
-        "port":  "/dev/ttyAMA4", # UART4 → Pin 21 (RXD4) / Pin 24 (TXD4)
+        "port":  "/dev/ttyAMA4",
+        "url":   "http://10.132.20.101/stream",
         "baud":  115200,
         "label": "Right Camera",
     },
     "rear":  {
-        "port":  "/dev/ttyAMA2", # UART2 → Pin 28 (RXD2) / Pin 27 (TXD2)
+        "port":  "/dev/ttyAMA2",
+        "url":   "http://10.132.20.209/stream",
         "baud":  115200,
         "label": "Rear Camera",
     },
@@ -68,9 +71,9 @@ CAMERA_PORTS = {
 # ─────────────────────────────────────────────────────────────
 
 ZONE = {
-    "safe":     300,   # > 300 cm  → Green  (system standby)
-    "caution":  150,   # 150–300 cm → Yellow (visual LED warning)
-    "critical":  80,   #  < 80 cm  → Red    (LED flash + motor pulse)
+    "safe":     300,   # > 300 cm  → Green
+    "caution":  200,   # < 200 cm  → Yellow (if vehicle + moving)
+    "critical": 100,   # < 100 cm  → Red    (if vehicle + moving)
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -96,8 +99,10 @@ CAMERA = {
     "fps":          15,
     "yolo_model":   "yolov8n.pt",          # Nano model for Pi performance
     "conf_thresh":  0.45,
-    "target_classes": ["car", "truck", "motorcycle", "bus", "person", "bicycle"],
+    "target_classes":  ["car", "truck", "motorcycle", "bus", "person", "bicycle"],
+    "vehicle_classes": ["car", "truck", "motorcycle", "bus"],
     "approach_speed_thresh_px": 8,         # px/frame velocity to trigger caution
+    "motion_thresh_px":         3,         # min px shift to consider "moving"
 }
 
 # ─────────────────────────────────────────────────────────────

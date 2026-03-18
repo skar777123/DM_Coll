@@ -45,7 +45,7 @@ sensors/
   ultrasonic.py           ← HC-SR04 manager (3 background threads)
   camera.py               ← ESP32-CAM MJPEG + YOLOv8 detection
 
-warnings/
+alerts/
   leds.py                 ← LED controller (solid / flash)
   motors.py               ← Vibration motor PWM controller
 

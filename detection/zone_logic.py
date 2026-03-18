@@ -32,8 +32,8 @@ from typing import TYPE_CHECKING, Dict, Optional
 from config import ZONE
 
 if TYPE_CHECKING:
-    from warnings.leds   import LEDController
-    from warnings.motors import MotorController
+    from alerts.leds   import LEDController
+    from alerts.motors import MotorController
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +49,9 @@ class DirectionState:
     zone:         str = "safe"           # 'safe' | 'caution' | 'critical'
     distance_cm:  float = 999.0
     camera_threat: bool = False
+    is_vehicle:    bool = False
+    is_moving:     bool = False
+    vision_active: bool = False
     led_mode:     str = "off"            # 'off' | 'solid' | 'flash'
     motor_mode:   str = "off"            # 'off' | 'pulse'
     updated_at:   float = field(default_factory=time.time)
@@ -59,6 +62,9 @@ class DirectionState:
             "zone":          self.zone,
             "distance_cm":   round(self.distance_cm, 1),
             "camera_threat": self.camera_threat,
+            "is_vehicle":    self.is_vehicle,
+            "is_moving":     self.is_moving,
+            "vision_active": self.vision_active,
             "led_mode":      self.led_mode,
             "motor_mode":    self.motor_mode,
             "updated_at":    self.updated_at,
@@ -107,6 +113,7 @@ class ZoneEvaluator:
         self._leds   = leds
         self._motors = motors
         self._state  = SystemState()
+        self._overrides: Dict[str, str] = {}   # direction -> zone override
         log.info("ZoneEvaluator ready.")
 
     # ── Public ────────────────────────────────────────────────────────────────
@@ -114,6 +121,21 @@ class ZoneEvaluator:
     @property
     def state(self) -> SystemState:
         return self._state
+
+    def set_override(self, direction: str, zone: str) -> None:
+        """Manually force a zone for testing (or clear it)."""
+        if direction == "all":
+            if zone == "safe":
+                self._overrides.clear()
+            else:
+                for d in DIRECTIONS:
+                    self._overrides[d] = zone
+        elif direction in DIRECTIONS:
+            if zone == "safe":
+                self._overrides.pop(direction, None)
+            else:
+                self._overrides[direction] = zone
+        log.info("Evaluator overrides: %s", self._overrides)
 
     def evaluate(
         self,
@@ -135,7 +157,13 @@ class ZoneEvaluator:
 
             dist          = u.get("distance_cm", 999.0)
             cam_threat    = cf.threat if cf else False
-            dir_state     = self._evaluate_direction(direction, dist, cam_threat)
+            is_vehicle    = cf.is_vehicle if cf else False
+            is_moving     = cf.is_moving if cf else False
+            vision_active = cf.vision_active if cf else False
+            
+            dir_state     = self._evaluate_direction(
+                direction, dist, cam_threat, is_vehicle, is_moving, vision_active
+            )
 
             setattr(new_state, direction, dir_state)
 
@@ -146,18 +174,36 @@ class ZoneEvaluator:
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _evaluate_direction(
-        self, direction: str, distance_cm: float, cam_threat: bool
+        self, direction: str, distance_cm: float, cam_threat: bool,
+        is_vehicle: bool = False, is_moving: bool = False, vision_active: bool = False
     ) -> DirectionState:
 
-        # ── Zone determination ─────────────────────────────────────────────
-        if distance_cm <= ZONE["critical"]:
-            zone = "critical"
-        elif distance_cm <= ZONE["caution"] or cam_threat:
-            zone = "caution"
-        elif cam_threat:
-            zone = "caution"
+        # ── Zone determination (with override support) ─────────────────────
+        if direction in self._overrides:
+            zone = self._overrides[direction]
+            # Fake distance if override is active
+            if zone == "critical": distance_cm = min(distance_cm, 50.0)
+            elif zone == "caution": distance_cm = min(distance_cm, 150.0)
         else:
-            zone = "safe"
+            # ── Intelligent Alerting Logic ─────────────────────────────────
+            if vision_active:
+                # AI is working: ONLY alert if it's a MOVING VEHICLE
+                if is_vehicle and is_moving and distance_cm <= ZONE["caution"]:
+                    if distance_cm <= ZONE["critical"]:
+                        zone = "critical"
+                    else:
+                        zone = "caution"
+                else:
+                    zone = "safe"
+            else:
+                # DEGRADED MODE: AI vision is unavailable (safety fallback)
+                # Fallback to pure ultrasonic distance readings
+                if distance_cm <= ZONE["critical"]:
+                    zone = "critical"
+                elif distance_cm <= ZONE["caution"]:
+                    zone = "caution"
+                else:
+                    zone = "safe"
 
         # ── Map zone to output modes ───────────────────────────────────────
         if zone == "safe":
@@ -175,6 +221,9 @@ class ZoneEvaluator:
             zone=zone,
             distance_cm=distance_cm,
             camera_threat=cam_threat,
+            is_vehicle=is_vehicle,
+            is_moving=is_moving,
+            vision_active=vision_active,
             led_mode=led_mode,
             motor_mode=motor_mode,
         )
