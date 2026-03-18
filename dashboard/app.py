@@ -12,6 +12,7 @@ Endpoints
 GET  /              → Main dashboard HTML
 GET  /api/state     → JSON snapshot of current system state
 GET  /api/cameras   → JSON with base64 camera frames
+GET  /api/health    → JSON with camera stream health stats
 POST /api/override  → Manually trigger a warning (test mode)
 WS   /socket.io     → Real-time push events
 """
@@ -69,7 +70,32 @@ def api_cameras():
     frames = _camera_manager.get_all_frames()
     result = {}
     for pos, frame in frames.items():
-        result[pos] = frame.to_dict() if frame else {"position": pos, "frame_b64": "", "detections": [], "threat": False}
+        result[pos] = frame.to_dict() if frame else {
+            "position": pos, "frame_b64": "", "detections": [],
+            "threat": False, "is_vehicle": False, "is_moving": False,
+            "vision_active": False, "max_approach": 0.0,
+        }
+    return jsonify(result)
+
+
+@app.route("/api/health")
+def api_health():
+    """Returns camera stream health statistics for debugging."""
+    result = {"cameras": {}, "system": {}}
+    
+    if _camera_manager is not None and hasattr(_camera_manager, 'get_health'):
+        result["cameras"] = _camera_manager.get_health()
+    
+    if _evaluator is not None:
+        state = _evaluator.state
+        result["system"] = {
+            "timestamp": state.timestamp,
+            "zones": {
+                d: state.get(d).zone if state.get(d) else "unknown"
+                for d in ("left", "right", "rear")
+            }
+        }
+    
     return jsonify(result)
 
 
@@ -97,6 +123,12 @@ def on_connect():
     log.info("Dashboard client connected.")
     if _evaluator:
         emit("state_update", _evaluator.state.to_dict())
+    # Send initial camera frames
+    if _camera_manager:
+        frames = _camera_manager.get_all_frames()
+        for pos, frame in frames.items():
+            if frame and frame.frame_b64:
+                emit("camera_frame", frame.to_dict())
 
 
 @socketio.on("disconnect")
@@ -122,23 +154,40 @@ def _emit_loop():
     """Push system state and camera frames to all clients at ~20 Hz."""
     global _running
     interval = DASHBOARD["emit_rate"]
-    # Sync camera emit with DASHBOARD["emit_rate"] for smoother streaming
-    last_cam = 0.0
+    # Track which camera frames have actually changed (by timestamp)
+    last_cam_timestamps = {"left": 0.0, "right": 0.0, "rear": 0.0}
 
     while _running:
         try:
+            # Emit state update
             if _evaluator:
                 state_dict = _evaluator.state.to_dict()
                 socketio.emit("state_update", state_dict)
 
-            now = time.time()
-            if _camera_manager and (now - last_cam) >= interval:
+            # Emit camera frames — only if they've changed (dedup by timestamp)
+            if _camera_manager:
                 frames = _camera_manager.get_all_frames()
                 for pos, frame in frames.items():
                     if frame and frame.frame_b64:
-                        # Only emit if it's a fresh frame to save bandwidth
-                        socketio.emit("camera_frame", frame.to_dict())
-                last_cam = now
+                        # Only emit if this is a new frame
+                        if frame.timestamp > last_cam_timestamps.get(pos, 0.0):
+                            socketio.emit("camera_frame", frame.to_dict())
+                            last_cam_timestamps[pos] = frame.timestamp
+                    elif not frame:
+                        # Camera went offline — notify the dashboard
+                        # Only send this once when it transitions to offline
+                        if last_cam_timestamps.get(pos, 0.0) > 0.0:
+                            socketio.emit("camera_frame", {
+                                "position": pos,
+                                "frame_b64": "",
+                                "detections": [],
+                                "threat": False,
+                                "is_vehicle": False,
+                                "is_moving": False,
+                                "vision_active": False,
+                                "max_approach": 0.0,
+                            })
+                            last_cam_timestamps[pos] = 0.0
 
         except Exception as exc:
             log.debug("Emit loop error: %s", exc)

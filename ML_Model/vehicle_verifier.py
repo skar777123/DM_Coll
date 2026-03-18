@@ -2,6 +2,11 @@
 ML_Model/vehicle_verifier.py
 ─────────────────────────────
 Two-Stage Unified Vehicle Threat Analyzer for BlindSpotGuard.
+
+Stage 1: YOLO identifies if a vehicle is present
+Stage 2: LSTM verifies the threat level (speed, trajectory)
+
+Handles offline sensors gracefully and includes caution zone support.
 """
 
 from __future__ import annotations
@@ -26,9 +31,19 @@ class UnifiedVehicleThreatEngine(MLThreatEngine):
         DIRS = ("left", "right", "rear")
         dists = [ultrasonic_data.get(d, {}).get("distance_cm", 300.0) for d in DIRS]
         
+        # ── Handle offline sensors ─────────────────────────────────────────
+        # Replace -1 (offline) with safe default for ML pipeline,
+        # but track which sensors are offline for final zone assignment
+        offline_mask = [d < 0 for d in dists]
+        safe_dists = [300.0 if d < 0 else d for d in dists]
+        
         # Stage 1: Vehicle Identification
         identified_vehicles = []
         for i, d in enumerate(DIRS):
+            if offline_mask[i]:
+                identified_vehicles.append(False)
+                continue
+                
             frame = camera_frames.get(d)
             yolo_v = frame.is_vehicle if frame else False
             
@@ -36,13 +51,13 @@ class UnifiedVehicleThreatEngine(MLThreatEngine):
             col = i * SENSOR_FEATURES
             snap = self._history.latest_snap
             vel = snap[col + 1] * 400.0 if col + 1 < len(snap) else 0.0
-            heuristic_v = (dists[i] <= 250.0 and vel > 80.0) if not yolo_v else False
+            heuristic_v = (safe_dists[i] <= 250.0 and vel > 80.0) if not yolo_v else False
             
             identified_vehicles.append(yolo_v or heuristic_v)
         
         # Stage 2: Verification (LSTM)
         cam_thr = [(camera_frames.get(d).threat if camera_frames.get(d) else False) for d in DIRS]
-        self._history.push(dists, cam_thr)
+        self._history.push(safe_dists, cam_thr)
 
         ml_zones = None
         ml_ttcs = None
@@ -54,6 +69,12 @@ class UnifiedVehicleThreatEngine(MLThreatEngine):
         final_zones = []
         for i, direction in enumerate(DIRS):
             dist = dists[i]
+            
+            # Offline sensors → "offline" zone, no alerts
+            if offline_mask[i]:
+                final_zones.append("offline")
+                continue
+            
             is_v = identified_vehicles[i]
             
             zone = "safe"
@@ -61,9 +82,6 @@ class UnifiedVehicleThreatEngine(MLThreatEngine):
             p_zone = ml_zones[i] if (ml_zones and i < len(ml_zones)) else "safe"
             ttc    = ml_ttcs[i]  if (ml_ttcs  and i < len(ml_ttcs))  else 999.0
 
-            # User requirement: Only critical if vehicle is coming fast and inside unsafe zone
-            # Otherwise SAFE.
-            
             # Fast approach from either camera threat or ultrasonic velocity:
             c_threat = bool(cam_thr[i])
             col = i * SENSOR_FEATURES
@@ -76,22 +94,36 @@ class UnifiedVehicleThreatEngine(MLThreatEngine):
             
             is_fast_approach = c_threat or u_threat or ml_threat
             
+            # Decision logic with caution support:
             if is_v and is_fast_approach and dist <= ZONE["critical"]:
                 zone = "critical"
+            elif is_v and dist <= ZONE["caution"]:
+                zone = "caution"
+            elif dist <= ZONE["critical"]:
+                # Safety fallback: something very close even without vehicle ID
+                zone = "critical"
+            elif dist <= ZONE["caution"] and (c_threat or u_threat):
+                zone = "caution"
             else:
                 zone = "safe"
             
             final_zones.append(zone)
 
         from detection.zone_logic import SystemState, DirectionState
+        
+        # Map zone strings to LED/motor modes (including 'offline')
+        _led_map = {"safe": "off", "caution": "solid", "critical": "flash", "offline": "off"}
+        _motor_map = lambda z: "pulse" if z == "critical" else "off"
+        
         new_state = SystemState(timestamp=time.time())
         for i, direction in enumerate(DIRS):
             ds = DirectionState(
                 direction=direction, zone=final_zones[i], distance_cm=dists[i],
                 camera_threat=bool(cam_thr[i]), is_vehicle=identified_vehicles[i],
                 is_moving=(camera_frames.get(direction).is_moving if camera_frames.get(direction) else False),
-                led_mode={"safe": "off", "caution": "solid", "critical": "flash"}[final_zones[i]],
-                motor_mode="pulse" if final_zones[i] == "critical" else "off"
+                vision_active=(camera_frames.get(direction).vision_active if camera_frames.get(direction) else False),
+                led_mode=_led_map.get(final_zones[i], "off"),
+                motor_mode=_motor_map(final_zones[i]),
             )
             setattr(new_state, direction, ds)
 

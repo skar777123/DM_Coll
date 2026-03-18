@@ -153,15 +153,23 @@ function setZone(dir, zone, distCm, camThreat, ledMode, motorMode, isVehicle, is
   if (distEl) {
     if (zone === 'offline') {
       distEl.textContent = 'OFFLINE';
+      distEl.style.color = 'var(--text-mute, #666)';
     } else {
       distEl.textContent = distCm >= 400 ? '> 400 cm' : `${distCm.toFixed(1)} cm`;
+      distEl.style.color = '';
     }
   }
 
   // Progress bar
   if (barEl) {
-    const pct = Math.max(2, Math.min(100, ((400 - distCm) / 400) * 100));
-    barEl.style.width = pct + '%';
+    if (zone === 'offline') {
+      barEl.style.width = '0%';
+      barEl.style.opacity = '0.3';
+    } else {
+      const pct = Math.max(2, Math.min(100, ((400 - distCm) / 400) * 100));
+      barEl.style.width = pct + '%';
+      barEl.style.opacity = '1';
+    }
   }
 
   // Badge

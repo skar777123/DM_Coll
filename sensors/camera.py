@@ -1,20 +1,19 @@
 """
 camera.py
 ─────────
-ESP32-CAM Serial Stream Reader + Object Detection Pipeline.
+ESP32-CAM HTTP Stream Reader + Object Detection Pipeline.
 
-Each ESP32-CAM streams JPEG frames over a UART serial port.
-A background thread receives the MJPEG stream and passes frames
+Each ESP32-CAM streams JPEG frames over WiFi HTTP (MJPEG).
+A background thread receives the stream and passes frames
 to an optional YOLOv8 detector running on the Pi.
 
-UART Wiring (GPIO BCM):
-  Left   → /dev/ttyS0   (UART0)  — RXD: BCM 15, TXD: BCM 14
-  Right  → /dev/ttyAMA4 (UART4)  — RXD: BCM  9, TXD: BCM  8 (Pi4)
-  Rear   → /dev/ttyAMA2 (UART2)  — RXD: BCM  1, TXD: BCM  0 (Pi4)
+Stream URLs (configured in config.py):
+  Left   → http://10.132.20.188/stream
+  Right  → http://10.132.20.101/stream
+  Rear   → http://10.132.20.209/stream
 
-Note: Enable additional UARTs in /boot/config.txt:
-      dtoverlay=uart2
-      dtoverlay=uart4
+Note: ESP32-CAMs serve multipart/x-mixed-replace MJPEG streams
+      on the /stream endpoint when using the standard CameraWebServer sketch.
 """
 
 from __future__ import annotations
@@ -100,7 +99,7 @@ class CameraFrame:
 
 class CameraStream:
     """
-    Reads MJPEG frames from an ESP32-CAM via UART or HTTP Stream.
+    Reads MJPEG frames from an ESP32-CAM via HTTP Stream (primary) or UART serial (fallback).
     Object detection runs in the same thread (rate-limited to avoid starvation).
     """
 
@@ -118,14 +117,19 @@ class CameraStream:
         self._thread: Optional[threading.Thread] = None
         self._prev_sizes: List[int] = []     # for approach-speed estimation
         self._prev_detections: List[Detection] = []
+        
+        # Stream health tracking
+        self._frame_count = 0
+        self._last_frame_time = 0.0
+        self._consecutive_errors = 0
 
     # ── Public ────────────────────────────────────────────────────────────────
 
     @property
     def latest_frame(self) -> Optional[CameraFrame]:
         with self._lock:
-            # If the current frame is older than 3 seconds, the stream has hung/disconnected
-            if self._latest and (time.time() - self._latest.timestamp > 3.0):
+            # If the current frame is older than 5 seconds, the stream has hung/disconnected
+            if self._latest and (time.time() - self._latest.timestamp > 5.0):
                 self._latest = None
             return self._latest
 
@@ -144,15 +148,16 @@ class CameraStream:
     def stop(self) -> None:
         self._running = False
         if self._thread:
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=3.0)
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _loop(self) -> None:
-        if self.url and CV2_AVAILABLE:
+        if self.url:
             self._url_loop()
             return
 
+        # Serial mode (UART fallback)
         buf = b""
         try:
             with serial.Serial(self.port, self.baud, timeout=1.0) as ser:
@@ -177,81 +182,186 @@ class CameraStream:
             log.error("[Camera %s] serial error: %s", self.position, exc)
 
     def _url_loop(self) -> None:
-        """Reads frames from an HTTP MJPEG stream or polls single images with a persistent session."""
+        """
+        Robust HTTP MJPEG stream reader with automatic reconnection.
+        
+        Handles:
+          - MJPEG multipart streams (multipart/x-mixed-replace)
+          - Single image polling (image/jpeg fallback)
+          - Automatic reconnection with exponential backoff
+          - Per-frame timeout detection
+          - Buffer overflow protection
+        """
         import requests
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
 
-        log.info("[Camera %s] connecting to URL: %s", self.position, self.url)
-        
-        # Setup a persistent session with retries for better stability
+        # Setup a persistent session with retries
         session = requests.Session()
-        retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504])
+        retries = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[502, 503, 504],
+            allowed_methods=["GET"],
+        )
         session.mount("http://", HTTPAdapter(max_retries=retries))
+
+        retry_delay = CAMERA.get("stream_retry_delay", 2.0)
+        max_retry_delay = CAMERA.get("stream_max_retry_delay", 10.0)
+        connect_timeout = CAMERA.get("stream_connect_timeout", 5.0)
+        read_timeout = CAMERA.get("stream_read_timeout", 10.0)
+        chunk_size = CAMERA.get("stream_chunk_size", 32768)
+        frame_timeout = CAMERA.get("stream_frame_timeout", 5.0)
+        max_buffer = CAMERA.get("stream_max_buffer", 1048576)
+        current_delay = retry_delay
 
         while self._running:
             try:
-                with session.get(self.url, stream=True, timeout=(3.05, 10)) as response:
-                    if response.status_code != 200:
-                        log.error("[Camera %s] URL returned %d", self.position, response.status_code)
-                        time.sleep(2.0)
-                        continue
+                log.info("[Camera %s] Connecting to %s ...", self.position, self.url)
+                
+                response = session.get(
+                    self.url,
+                    stream=True,
+                    timeout=(connect_timeout, read_timeout),
+                )
+                
+                if response.status_code != 200:
+                    log.error("[Camera %s] HTTP %d from %s", self.position, response.status_code, self.url)
+                    response.close()
+                    time.sleep(current_delay)
+                    current_delay = min(current_delay * 1.5, max_retry_delay)
+                    continue
 
-                    content_type = response.headers.get("Content-Type", "")
+                content_type = response.headers.get("Content-Type", "")
+                self._consecutive_errors = 0
+                current_delay = retry_delay  # Reset backoff on successful connect
+
+                if "multipart/x-mixed-replace" in content_type:
+                    # ── MJPEG Stream Mode ──
+                    log.info("[Camera %s] MJPEG stream connected (Content-Type: %s)", 
+                             self.position, content_type)
                     
-                    if "multipart/x-mixed-replace" in content_type:
-                        log.info("[Camera %s] streaming MJPEG...", self.position)
+                    bytes_data = b""
+                    last_frame_at = time.time()
+
+                    for chunk in response.iter_content(chunk_size=chunk_size):
+                        if not self._running:
+                            break
                         
-                        # More robust boundary parsing
-                        boundary = b"--" + content_type.split("boundary=")[-1].encode() if "boundary=" in content_type else None
-                        
-                        bytes_data = b""
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if not self._running:
-                                break
-                            bytes_data += chunk
+                        if not chunk:
+                            continue
                             
-                            while True:
-                                a = bytes_data.find(b"\xff\xd8") # JPEG Start
-                                b = bytes_data.find(b"\xff\xd9") # JPEG End
-                                
-                                if a != -1 and b != -1:
-                                    if a < b:
-                                        jpg = bytes_data[a:b+2]
-                                        bytes_data = bytes_data[b+2:]
-                                        
-                                        # Basic JPEG integrity check
-                                        if len(jpg) > 100:
-                                            frame = self._process_jpeg(jpg)
-                                            with self._lock:
-                                                self._latest = frame
-                                    else:
-                                        # Discard junk before the next SOI
-                                        bytes_data = bytes_data[a:]
-                                    continue
+                        bytes_data += chunk
+
+                        # Extract all complete JPEG frames from the buffer
+                        frames_found = 0
+                        while True:
+                            soi_pos = bytes_data.find(_SOI)
+                            if soi_pos == -1:
+                                # No SOI marker found — discard everything
+                                bytes_data = b""
                                 break
                                 
-                            # Prevent bytes_data from growing too large if no EOI found
-                            if len(bytes_data) > 1024 * 1024:
-                                bytes_data = b""
-                                
+                            # Discard any data before the first SOI
+                            if soi_pos > 0:
+                                bytes_data = bytes_data[soi_pos:]
+                                soi_pos = 0
+                            
+                            eoi_pos = bytes_data.find(_EOI, 2)  # Search after SOI
+                            if eoi_pos == -1:
+                                # No complete frame yet — wait for more data
+                                break
+
+                            # Extract the complete JPEG
+                            jpeg = bytes_data[:eoi_pos + 2]
+                            bytes_data = bytes_data[eoi_pos + 2:]
+
+                            # Validate JPEG integrity (minimum reasonable size)
+                            if len(jpeg) > 200:
+                                frame = self._process_jpeg(jpeg)
+                                with self._lock:
+                                    self._latest = frame
+                                last_frame_at = time.time()
+                                self._frame_count += 1
+                                self._last_frame_time = last_frame_at
+                                frames_found += 1
+                            else:
+                                log.debug("[Camera %s] Discarded tiny JPEG (%d bytes)",
+                                          self.position, len(jpeg))
+
+                        # Buffer overflow protection
+                        if len(bytes_data) > max_buffer:
+                            log.warning("[Camera %s] Buffer overflow (%d bytes), resetting",
+                                        self.position, len(bytes_data))
+                            bytes_data = b""
+
+                        # Frame-level timeout: if we haven't received a complete frame
+                        # in N seconds, the stream is probably dead — reconnect
+                        if time.time() - last_frame_at > frame_timeout:
+                            log.warning("[Camera %s] No frame for %.1fs, reconnecting...",
+                                        self.position, frame_timeout)
+                            break
+
+                    response.close()
+
+                elif "image/jpeg" in content_type or content_type == "":
+                    # ── Single Image Polling Mode ──
+                    jpeg = response.content
+                    response.close()
+                    
+                    if jpeg and jpeg[:2] == _SOI and jpeg[-2:] == _EOI:
+                        frame = self._process_jpeg(jpeg)
+                        with self._lock:
+                            self._latest = frame
+                        self._frame_count += 1
+                        self._last_frame_time = time.time()
                     else:
-                        # Single image mode (polling)
-                        jpeg = response.content
-                        if jpeg.startswith(b"\xff\xd8") and jpeg.endswith(b"\xff\xd9"):
-                            frame = self._process_jpeg(jpeg)
-                            with self._lock:
-                                self._latest = frame
-                        
-                        # Use the configured FPS for polling interval
-                        time.sleep(1.0 / max(1, CAMERA["fps"]))
-                        
-            except Exception as exc:
-                log.error("[Camera %s] URL error: %s", self.position, exc)
+                        log.debug("[Camera %s] Invalid JPEG in polling response", self.position)
+
+                    # Polling interval based on configured FPS
+                    time.sleep(1.0 / max(1, CAMERA["fps"]))
+                    
+                else:
+                    log.warning("[Camera %s] Unexpected Content-Type: %s", 
+                                self.position, content_type)
+                    response.close()
+                    time.sleep(current_delay)
+
+            except requests.exceptions.ConnectionError as exc:
+                log.warning("[Camera %s] Connection failed: %s (retrying in %.1fs)",
+                            self.position, exc, current_delay)
+                self._consecutive_errors += 1
                 if self._running:
-                    time.sleep(2.0)
-        
-        session.close()
+                    time.sleep(current_delay)
+                    current_delay = min(current_delay * 1.5, max_retry_delay)
+
+            except requests.exceptions.Timeout as exc:
+                log.warning("[Camera %s] Timeout: %s (retrying in %.1fs)",
+                            self.position, exc, current_delay)
+                self._consecutive_errors += 1
+                if self._running:
+                    time.sleep(current_delay)
+                    current_delay = min(current_delay * 1.5, max_retry_delay)
+
+            except requests.exceptions.ChunkedEncodingError:
+                log.warning("[Camera %s] Stream interrupted (ChunkedEncodingError), reconnecting...",
+                            self.position)
+                self._consecutive_errors += 1
+                if self._running:
+                    time.sleep(retry_delay)
+
+            except Exception as exc:
+                log.error("[Camera %s] Unexpected error: %s (retrying in %.1fs)",
+                           self.position, exc, current_delay)
+                self._consecutive_errors += 1
+                if self._running:
+                    time.sleep(current_delay)
+                    current_delay = min(current_delay * 1.5, max_retry_delay)
+
+        try:
+            session.close()
+        except Exception:
+            pass
 
     def _process_jpeg(self, jpeg: bytes) -> CameraFrame:
         frame = CameraFrame(
@@ -284,7 +394,6 @@ class CameraStream:
                         x1, y1, x2, y2 = d.bbox
                         
                         # RED if it's a threat (fast approach or critical), GREEN if safe
-                        # We use approach_rate > thresh as the "not safe" indicator
                         is_threat = d.approach_rate > CAMERA["approach_speed_thresh_px"]
                         color = (0, 0, 255) if is_threat else (0, 255, 0) # BGR
                         
@@ -440,6 +549,7 @@ class CameraManager:
     def start(self) -> "CameraManager":
         for s in self._streams.values():
             s.start()
+            time.sleep(0.1)  # Stagger starts to avoid thundering herd
         return self
 
     def stop(self) -> None:
@@ -452,3 +562,15 @@ class CameraManager:
     def get_frame(self, position: str) -> Optional[CameraFrame]:
         stream = self._streams.get(position)
         return stream.latest_frame if stream else None
+    
+    def get_health(self) -> Dict[str, dict]:
+        """Return health stats for each camera stream."""
+        return {
+            name: {
+                "frame_count": s._frame_count,
+                "last_frame_time": s._last_frame_time,
+                "consecutive_errors": s._consecutive_errors,
+                "has_frame": s.latest_frame is not None,
+            }
+            for name, s in self._streams.items()
+        }

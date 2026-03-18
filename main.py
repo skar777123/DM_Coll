@@ -135,6 +135,7 @@ def main():
     log.info("[1/5] Initialising ultrasonic sensors…")
     _ultra_manager = UltrasonicManager()
     _ultra_manager.start()
+    time.sleep(0.3)   # Allow sensors to stabilise and gather initial readings
 
     log.info("[2/5] Initialising cameras…")
     try:
@@ -152,7 +153,7 @@ def main():
 
     _cam_manager = CameraManager()
     _cam_manager.start()
-    time.sleep(0.5)   # Give camera threads time to connect
+    time.sleep(1.0)   # Give camera threads time to connect and get first frames
 
     # ── 2. Output Devices ─────────────────────────────────────────────────────
     log.info("[3/5] Initialising LEDs and motors…")
@@ -174,9 +175,11 @@ def main():
     dashboard_app.start_background_emit()
 
     # ── 5. Control Loop ───────────────────────────────────────────────────────
-    log.info("All subsystems online. Entering main control loop at ~50 Hz…")
+    # HC-SR04 runs at ~16 Hz (60ms cycle). The main loop matches this rate.
+    log.info("All subsystems online. Entering main control loop at ~16 Hz…")
     _running   = True
-    interval   = ULTRASONIC["polling_interval_s"]   # 20 ms → 50 Hz
+    interval   = ULTRASONIC["polling_interval_s"]   # 60 ms → ~16 Hz
+    _last_log  = 0.0
 
     while _running:
         loop_start = time.perf_counter()
@@ -186,15 +189,17 @@ def main():
         state           = evaluator.evaluate(ultrasonic_data, camera_frames)
 
         # Throttled console summary (every 2 s)
-        if int(time.time()) % 2 == 0 and (time.time() % 2) < interval:
-            _log_summary(state)
+        now = time.time()
+        if now - _last_log >= 2.0:
+            _log_summary(state, _cam_manager)
+            _last_log = now
 
         elapsed = time.perf_counter() - loop_start
         sleep_t = max(0, interval - elapsed)
         time.sleep(sleep_t)
 
 
-def _log_summary(state) -> None:
+def _log_summary(state, cam_manager=None) -> None:
     from detection.zone_logic import SystemState
     if not isinstance(state, SystemState):
         return
@@ -202,8 +207,23 @@ def _log_summary(state) -> None:
     for d in ("left", "right", "rear"):
         ds = state.get(d)
         if ds:
-            parts.append(f"{d.upper():5s}: {ds.distance_cm:6.1f}cm [{ds.zone.upper()}]")
-    log.info(" | ".join(parts))
+            if ds.zone == "offline":
+                parts.append(f"{d.upper():5s}: OFFLINE")
+            else:
+                parts.append(f"{d.upper():5s}: {ds.distance_cm:6.1f}cm [{ds.zone.upper()}]")
+    
+    # Add camera status summary
+    cam_parts = []
+    if cam_manager:
+        frames = cam_manager.get_all_frames()
+        for d in ("left", "right", "rear"):
+            f = frames.get(d)
+            cam_parts.append(f"{d[0].upper()}:{'✔' if f else '✘'}")
+    
+    summary = " | ".join(parts)
+    if cam_parts:
+        summary += "  CAM[" + " ".join(cam_parts) + "]"
+    log.info(summary)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -128,6 +128,8 @@ body {
 
 .monitor-card.zone-caution { border-color: var(--caution); box-shadow: 0 0 20px var(--caution-glow); }
 .monitor-card.zone-critical { border-color: var(--critical); box-shadow: 0 0 30px var(--critical-glow); animation: shake 0.5s infinite; }
+.monitor-card.zone-offline { border-color: #cbd5e1; border-style: dashed; opacity: 0.6; }
+.monitor-card.zone-offline .dist-val { color: var(--text-mute); font-size: 1.5rem; }
 
 @keyframes shake { 0%, 100% { transform: translate(0,0); } 25% { transform: translate(2px,0); } 75% { transform: translate(-2px,0); } }
 
@@ -140,6 +142,7 @@ body {
 }
 .zone-caution .zone-badge { background: var(--caution-glow); color: var(--caution); border-color: var(--caution); }
 .zone-critical .zone-badge { background: var(--critical-glow); color: var(--critical); border-color: var(--critical); }
+.zone-offline .zone-badge { background: #f1f5f9; color: #94a3b8; border-color: #cbd5e1; border-style: dashed; }
 
 /* Cam Feed */
 .cam-feed {
@@ -170,6 +173,7 @@ body {
 .progress-bar { height: 100%; background: var(--safe); width: 0; transition: var(--transition); }
 .zone-caution .progress-bar { background: var(--caution); }
 .zone-critical .progress-bar { background: var(--critical); }
+.zone-offline .progress-bar { background: #cbd5e1; }
 
 /* Indicators */
 .indicator-grid { display: flex; gap: 0.5rem; }
@@ -216,6 +220,7 @@ body {
 .threat-arc.zone-safe { opacity: 0.1; }
 .threat-arc.zone-caution { opacity: 1; border-color: var(--caution); }
 .threat-arc.zone-critical { opacity: 1; border-color: var(--critical); animation: arc-pulse 0.5s infinite; }
+.threat-arc.zone-offline { opacity: 0.05; border-color: #cbd5e1; border-style: dashed; }
 
 @keyframes arc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 

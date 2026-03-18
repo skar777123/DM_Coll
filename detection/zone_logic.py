@@ -7,19 +7,31 @@ Combines ultrasonic distance readings and camera object-detection
 results to determine the zone (safe / caution / critical) for each
 direction, and issues the corresponding LED + motor commands.
 
-Decision table
-──────────────
-Zone       Ultrasonic Distance   Camera Threat
-──────────────────────────────────────────────
-safe       > 300 cm              No detection
-caution    100–300 cm            OR approaching object detected
-critical   < 100 cm              AND / OR confirmed threat
+Decision table (Vision Active — AI sees the cameras)
+──────────────────────────────────────────────────────
+Zone       Condition
+──────────────────────────────────────────────────────
+critical   Vehicle + fast approach + dist ≤ 100 cm
+caution    Vehicle detected + dist ≤ 200 cm (or) camera threat present
+safe       All clear / object far away / non-vehicle
+
+Decision table (Vision Inactive — degraded safety mode)
+──────────────────────────────────────────────────────
+Zone       Ultrasonic Distance
+──────────────────────────────────────────────────────
+critical   ≤ 100 cm
+caution    ≤ 200 cm
+safe       > 300 cm
+
+Special states:
+  offline  → sensor disconnected (distance_cm == -1)
 
 Outputs per direction
 ─────────────────────
 safe     → LED off,   motor off
 caution  → LED solid, motor off
 critical → LED flash, motor pulse
+offline  → LED off,   motor off (no false alarms)
 """
 
 from __future__ import annotations
@@ -46,7 +58,7 @@ DIRECTIONS = ("left", "right", "rear")
 class DirectionState:
     """Holds the evaluated state for one direction."""
     direction:    str
-    zone:         str = "safe"           # 'safe' | 'caution' | 'critical'
+    zone:         str = "safe"           # 'safe' | 'caution' | 'critical' | 'offline'
     distance_cm:  float = 999.0
     camera_threat: bool = False
     is_vehicle:    bool = False
@@ -97,7 +109,7 @@ class ZoneEvaluator:
     """
     Core decision engine — fuses sensor data and drives output devices.
 
-    Designed to be called at ~50 Hz from the main control loop.
+    Designed to be called at ~16 Hz from the main control loop.
 
     Usage::
 
@@ -178,6 +190,20 @@ class ZoneEvaluator:
         is_vehicle: bool = False, is_moving: bool = False, vision_active: bool = False
     ) -> DirectionState:
 
+        # ── Handle offline sensor (distance == -1) ─────────────────────────
+        if distance_cm < 0:
+            return DirectionState(
+                direction=direction,
+                zone="offline",
+                distance_cm=distance_cm,
+                camera_threat=cam_threat,
+                is_vehicle=is_vehicle,
+                is_moving=is_moving,
+                vision_active=vision_active,
+                led_mode="off",
+                motor_mode="off",
+            )
+
         # ── Zone determination (with override support) ─────────────────────
         if direction in self._overrides:
             zone = self._overrides[direction]
@@ -187,12 +213,31 @@ class ZoneEvaluator:
         else:
             # ── Intelligent Alerting Logic ─────────────────────────────────
             if vision_active:
-                # AI is working: User explicitly wants CRITICAL ONLY if:
-                # 1. It is a vehicle
-                # 2. It is coming fast (cam_threat == True)
-                # 3. It is in the unsafe zone (distance_cm <= ZONE["critical"])
+                # AI is working — use combined sensor fusion:
+                #
+                # CRITICAL: Vehicle + fast approach + inside critical zone
+                # CAUTION:  Vehicle detected nearby (≤ caution zone)
+                #           OR camera detecting a threat approach
+                # SAFE:     Everything clear
+                #
+                # SAFETY FALLBACK: Even if AI sees no vehicle, still alert
+                #                  on pure ultrasonic distance if too close.
+                #                  This prevents silent failures.
+                
                 if is_vehicle and cam_threat and distance_cm <= ZONE["critical"]:
                     zone = "critical"
+                elif is_vehicle and distance_cm <= ZONE["caution"]:
+                    zone = "caution"
+                elif cam_threat and distance_cm <= ZONE["caution"]:
+                    zone = "caution"
+                elif distance_cm <= ZONE["critical"]:
+                    # SAFETY FALLBACK: Something is dangerously close even if
+                    # AI doesn't classify it as a vehicle — still warn!
+                    zone = "critical"
+                elif distance_cm <= ZONE["caution"]:
+                    # SAFETY FALLBACK: Object in caution range, AI doesn't
+                    # see a vehicle — mild caution (could be a pedestrian, wall, etc.)
+                    zone = "caution"
                 else:
                     zone = "safe"
             else:
@@ -206,7 +251,7 @@ class ZoneEvaluator:
                     zone = "safe"
 
         # ── Map zone to output modes ───────────────────────────────────────
-        if zone == "safe":
+        if zone == "safe" or zone == "offline":
             led_mode   = "off"
             motor_mode = "off"
         elif zone == "caution":
@@ -242,8 +287,6 @@ class ZoneEvaluator:
         left_critical  = state.left.zone  == "critical"
         right_critical = state.right.zone == "critical"
         rear_critical  = state.rear.zone  == "critical"
-        left_caution   = state.left.zone  == "caution"
-        right_caution  = state.right.zone == "caution"
 
         if rear_critical:
             self._motors.rear_threat()       # both motors pulse
@@ -251,7 +294,5 @@ class ZoneEvaluator:
             self._motors.left_threat()
         elif right_critical:
             self._motors.right_threat()
-        elif left_caution or right_caution:
-            self._motors.all_off()
         else:
             self._motors.all_off()

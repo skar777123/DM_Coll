@@ -84,9 +84,12 @@ ULTRASONIC = {
     "trigger_pulse_us":    0.00001,   # 10 µs trigger pulse
     "max_distance_cm":     400,       # Beyond this → ignored
     "speed_of_sound_cmps": 34300,     # cm/s at ~20°C
-    "timeout_s":           0.04,      # 40 ms timeout (≈ 680 cm round-trip)
-    "readings_per_avg":    3,         # Readings averaged per cycle
-    "polling_interval_s":  0.02,      # 50 Hz polling rate
+    "timeout_s":           0.03,      # 30 ms timeout (≈ 500 cm round-trip)
+    "readings_per_avg":    5,         # Median filter window size (odd number)
+    "polling_interval_s":  0.06,      # ~16 Hz polling rate (HC-SR04 min cycle = 60ms)
+    "settle_time_s":       0.000005,  # 5 µs pre-trigger LOW settle time
+    "outlier_jump_pct":    0.50,      # Reject readings that jump >50% from prev
+    "min_valid_cm":        2.0,       # HC-SR04 min reliable range
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -103,6 +106,13 @@ CAMERA = {
     "vehicle_classes": ["car", "truck", "motorcycle", "bus"],
     "approach_speed_thresh_px": 8,         # px/frame velocity to trigger caution
     "motion_thresh_px":         3,         # min px shift to consider "moving"
+    "stream_chunk_size":     32768,        # 32 KB chunks for MJPEG reads
+    "stream_frame_timeout":    5.0,        # Reconnect if no frame in 5 seconds
+    "stream_connect_timeout":  5.0,        # TCP connect timeout for camera URLs
+    "stream_read_timeout":    10.0,        # TCP read timeout for camera streams
+    "stream_max_buffer":  1048576,         # 1 MB max buffer before reset
+    "stream_retry_delay":      2.0,        # Initial retry delay (seconds)
+    "stream_max_retry_delay": 10.0,        # Maximum retry delay (seconds)
 }
 
 # ─────────────────────────────────────────────────────────────
