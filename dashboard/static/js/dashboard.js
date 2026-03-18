@@ -151,7 +151,11 @@ function setZone(dir, zone, distCm, camThreat, ledMode, motorMode, isVehicle, is
 
   // Distance
   if (distEl) {
-    distEl.textContent = distCm >= 400 ? '> 400 cm' : `${distCm.toFixed(1)} cm`;
+    if (zone === 'offline') {
+      distEl.textContent = 'OFFLINE';
+    } else {
+      distEl.textContent = distCm >= 400 ? '> 400 cm' : `${distCm.toFixed(1)} cm`;
+    }
   }
 
   // Progress bar
@@ -332,43 +336,9 @@ function testOverride(direction, zone) {
   }).catch(e => log('Override error: ' + e.message, 'caution'));
 }
 
-/* ═══════════════════════ SIMULATION (no server) ═══════════ */
-/* When running the HTML standalone without a Pi, simulate data so the UI
-   looks live. Disabled automatically once a real socket connection arrives. */
-let simInterval = null;
-
-function startSimulation() {
-  if (connected) return;
-  const DIRS = ['left', 'right', 'rear'];
-  const ZONES = [ZONE_SAFE, ZONE_CAUTION, ZONE_CRITICAL];
-
-  simInterval = setInterval(() => {
-    if (connected) { clearInterval(simInterval); return; }
-    const fakeState = { timestamp: Date.now() / 1000 };
-    DIRS.forEach(dir => {
-      const zone = ZONES[Math.floor(Math.random() * ZONES.length * 1.5) % 3];
-      const dist = zone === ZONE_CRITICAL ? 40 + Math.random() * 40 :
-                   zone === ZONE_CAUTION  ? 100 + Math.random() * 150 :
-                                            300 + Math.random() * 100;
-      fakeState[dir] = {
-        zone, direction: dir,
-        distance_cm: dist,
-        camera_threat: zone === ZONE_CRITICAL && Math.random() > 0.4,
-        vision_active: true,
-        led_mode:   zone === ZONE_CRITICAL ? 'flash' : zone === ZONE_CAUTION ? 'solid' : 'off',
-        motor_mode: zone === ZONE_CRITICAL ? 'pulse' : 'off',
-      };
-    });
-    applyStateUpdate(fakeState);
-  }, 500);
-}
-
 /* ═══════════════════════ INIT ═════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
   initCamRefs();
   log('BlindSpotGuard Dashboard loaded.', 'info');
   log('Attempting WebSocket connection…', 'info');
-  setTimeout(() => {
-    if (!connected) startSimulation();
-  }, 2500);
 });

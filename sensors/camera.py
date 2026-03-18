@@ -124,6 +124,9 @@ class CameraStream:
     @property
     def latest_frame(self) -> Optional[CameraFrame]:
         with self._lock:
+            # If the current frame is older than 3 seconds, the stream has hung/disconnected
+            if self._latest and (time.time() - self._latest.timestamp > 3.0):
+                self._latest = None
             return self._latest
 
     def start(self) -> "CameraStream":

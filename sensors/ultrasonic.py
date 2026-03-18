@@ -61,6 +61,7 @@ class UltrasonicSensor:
         self._running  = False
         self._thread: Optional[threading.Thread] = None
         self._history: deque[float] = deque(maxlen=_AVG_N)
+        self._last_valid_time = 0.0
 
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
@@ -73,13 +74,18 @@ class UltrasonicSensor:
     def distance_cm(self) -> float:
         """Latest smoothed distance in centimetres."""
         with self._lock:
+            # If no reading for over 2 seconds, assume sensor is physically disconnected
+            if time.time() - self._last_valid_time > 2.0:
+                return -1.0
             return round(self._dist, 1)
 
     @property
     def zone(self) -> str:
-        """'safe' | 'caution' | 'critical'"""
+        """'safe' | 'caution' | 'critical' | 'offline'"""
         from config import ZONE
         d = self.distance_cm
+        if d < 0:
+            return "offline"
         if d > ZONE["safe"]:
             return "safe"
         if d > ZONE["critical"]:
@@ -114,6 +120,7 @@ class UltrasonicSensor:
                 self._history.append(raw)
                 with self._lock:
                     self._dist = sum(self._history) / len(self._history)
+                    self._last_valid_time = time.time()
             time.sleep(_POLL_INTERVAL)
 
     def _read_once(self) -> Optional[float]:
