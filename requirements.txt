@@ -8,6 +8,7 @@ flask-socketio==5.3.6
 python-socketio==5.11.2
 python-engineio==4.9.1
 eventlet==0.35.2             # async mode for flask-socketio
+simple-websocket>=0.10.1     # Required for WebSocket support in "threading" mode
 
 # ── Hardware (Raspberry Pi only) ────────────────────────────
 RPi.GPIO==0.7.1              # GPIO control (Pi only, skip on PC)

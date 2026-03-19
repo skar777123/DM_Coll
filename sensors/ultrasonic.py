@@ -189,7 +189,6 @@ class UltrasonicSensor:
                 if time.perf_counter() > timeout_at:
                     log.debug("Sensor [%s] timed out waiting for pulse start.", self.name)
                     return None
-                time.sleep(0.0001)   # Yield CPU to other threads (100 µs)
             pulse_start = time.perf_counter()
 
             # 2. Wait for ECHO to go LOW (end of pulse)
@@ -200,7 +199,6 @@ class UltrasonicSensor:
                 if time.perf_counter() > timeout_at:
                     log.debug("Sensor [%s] timed out waiting for pulse end.", self.name)
                     return None
-                time.sleep(0.0001)   # Yield CPU to other threads (100 µs)
             pulse_end = time.perf_counter()
 
             duration = pulse_end - pulse_start
