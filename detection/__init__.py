@@ -1,1 +1,5 @@
-"""Detection package — Zone logic and threat evaluation."""
+"""
+detection/__init__.py
+"""
+
+from detection.zone_logic import ZoneEvaluator, SystemState, DirectionState

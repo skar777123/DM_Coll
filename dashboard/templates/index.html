@@ -12,7 +12,8 @@
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
-  <!-- ═══════════════════════════ HEADER ═══════════════════════════ -->
+
+  <!-- ════════════════════ HEADER ════════════════════ -->
   <header class="header">
     <div class="header-inner">
       <div class="brand">
@@ -37,10 +38,10 @@
     </div>
   </header>
 
-  <!-- ═══════════════════════════ MAIN DASHBOARD ════════════════════════════ -->
+  <!-- ════════════════════ MAIN DASHBOARD ════════════════════ -->
   <main class="dashboard-container">
     <div class="primary-grid">
-      
+
       <!-- LEFT MONITOR -->
       <section class="monitor-card" id="card-left" data-direction="left">
         <div class="card-header">
@@ -58,11 +59,11 @@
             <div class="progress-bar-wrap"><div class="progress-bar" id="bar-left"></div></div>
           </div>
           <div class="indicator-grid">
-            <div class="ind-dot led-dot" id="led-left" title="LED Alert">L</div>
-            <div class="ind-dot motor-dot" id="motor-left" title="Haptic Motor">M</div>
-            <div class="ind-dot cam-dot" id="cam-threat-left" title="AI Camera">C</div>
+            <div class="ind-dot led-dot"     id="led-left"        title="LED Alert">L</div>
+            <div class="ind-dot motor-dot"   id="motor-left"      title="Haptic Motor">M</div>
+            <div class="ind-dot cam-dot"     id="cam-threat-left" title="AI Camera">C</div>
             <div class="ind-dot vehicle-dot" id="is-vehicle-left" title="Vehicle Detected">V</div>
-            <div class="ind-dot moving-dot" id="is-moving-left" title="Object Moving">D</div>
+            <div class="ind-dot moving-dot"  id="is-moving-left"  title="Object Moving">D</div>
           </div>
         </div>
         <div class="cam-detections" id="camDetLeft">—</div>
@@ -108,20 +109,20 @@
             <div class="progress-bar-wrap"><div class="progress-bar" id="bar-right"></div></div>
           </div>
           <div class="indicator-grid">
-            <div class="ind-dot led-dot" id="led-right" title="LED Alert">L</div>
-            <div class="ind-dot motor-dot" id="motor-right" title="Haptic Motor">M</div>
-            <div class="ind-dot cam-dot" id="cam-threat-right" title="AI Camera">C</div>
+            <div class="ind-dot led-dot"     id="led-right"        title="LED Alert">L</div>
+            <div class="ind-dot motor-dot"   id="motor-right"      title="Haptic Motor">M</div>
+            <div class="ind-dot cam-dot"     id="cam-threat-right" title="AI Camera">C</div>
             <div class="ind-dot vehicle-dot" id="is-vehicle-right" title="Vehicle Detected">V</div>
-            <div class="ind-dot moving-dot" id="is-moving-right" title="Object Moving">D</div>
+            <div class="ind-dot moving-dot"  id="is-moving-right"  title="Object Moving">D</div>
           </div>
         </div>
         <div class="cam-detections" id="camDetRight">—</div>
       </section>
 
-    </div>
+    </div><!-- /.primary-grid -->
 
     <div class="secondary-grid">
-      
+
       <!-- REAR MONITOR -->
       <section class="monitor-card monitor-card--rear" id="card-rear" data-direction="rear">
         <div class="card-header">
@@ -140,12 +141,12 @@
               <div class="progress-bar-wrap"><div class="progress-bar" id="bar-rear"></div></div>
             </div>
             <div class="indicator-grid">
-              <div class="ind-dot led-dot" id="led-rear" title="LED Alert">L</div>
-              <div class="ind-dot motor-dot" id="motor-rear-l" title="Left Motor">ML</div>
-              <div class="ind-dot motor-dot" id="motor-rear-r" title="Right Motor">MR</div>
-              <div class="ind-dot cam-dot" id="cam-threat-rear" title="AI Camera">C</div>
+              <div class="ind-dot led-dot"     id="led-rear"        title="LED Alert">L</div>
+              <div class="ind-dot motor-dot"   id="motor-rear-l"    title="Left Motor">ML</div>
+              <div class="ind-dot motor-dot"   id="motor-rear-r"    title="Right Motor">MR</div>
+              <div class="ind-dot cam-dot"     id="cam-threat-rear" title="AI Camera">C</div>
               <div class="ind-dot vehicle-dot" id="is-vehicle-rear" title="Vehicle Detected">V</div>
-              <div class="ind-dot moving-dot" id="is-moving-rear" title="Object Moving">D</div>
+              <div class="ind-dot moving-dot"  id="is-moving-rear"  title="Object Moving">D</div>
             </div>
           </div>
         </div>
@@ -154,7 +155,7 @@
 
       <!-- SYSTEM PANEL -->
       <section class="system-panel">
-        
+
         <div class="stats-row" id="statsRow">
           <div class="stat-box"><span id="statUpdates">0</span><small>UPD/min</small></div>
           <div class="stat-box"><span id="statPing">--</span><small>ms</small></div>
@@ -173,17 +174,18 @@
         </div>
 
         <div class="manual-test">
-          <button class="btn-test" onclick="testOverride('left', 'critical')">LEFT</button>
+          <button class="btn-test" onclick="testOverride('left',  'critical')">LEFT</button>
           <button class="btn-test" onclick="testOverride('right', 'critical')">RIGHT</button>
-          <button class="btn-test" onclick="testOverride('rear', 'critical')">REAR</button>
+          <button class="btn-test" onclick="testOverride('rear',  'critical')">REAR</button>
           <button class="btn-test btn-reset" onclick="testOverride('all', 'safe')">RESET</button>
         </div>
+
       </section>
 
-    </div>
+    </div><!-- /.secondary-grid -->
   </main>
 
-  <!-- ═══════════════════════ ALERT BANNER ═══════════════════════ -->
+  <!-- ════════════════════ ALERT BANNER ════════════════════ -->
   <div class="alert-banner" id="alertBanner">
     <span id="alertText">⚠ CRITICAL THREAT DETECTED</span>
   </div>

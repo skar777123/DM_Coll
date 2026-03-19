@@ -1,64 +1,134 @@
-# ESP32-CAM Static IP Configuration
+# ESP32-CAM Sketches — BlindSpotGuard
 
-## How to Set Static IPs on Your ESP32-CAMs
+Three separate Arduino sketches, one per camera position.
+All share `blindspot_config.h` which contains all endpoint handlers,
+camera init, WiFi setup, and mDNS — linked to the Python backend.
 
-Each ESP32-CAM needs a **unique static IP** so the Raspberry Pi can always find it,
-even when the WiFi network changes or the router reboots.
+---
 
-## Step-by-Step Instructions
+## Directory Structure
 
-### 1. Open the CameraWebServer sketch in Arduino IDE
-
-### 2. Add the following code BEFORE `WiFi.begin()` in the sketch:
-
-```cpp
-// ═══════════════════════════════════════════════════════════
-//  STATIC IP CONFIGURATION — Change for each ESP32-CAM!
-// ═══════════════════════════════════════════════════════════
-
-// LEFT CAMERA: 192.168.1.181
-// RIGHT CAMERA: 192.168.1.182  
-// REAR CAMERA: 192.168.1.183
-
-// Set YOUR values below:
-IPAddress local_IP(192, 168, 1, 181);      // ← Change per camera
-IPAddress gateway(192, 168, 1, 1);         // ← Your router IP
-IPAddress subnet(255, 255, 255, 0);
-IPAddress dns(8, 8, 8, 8);                 // Google DNS
-
-// Apply static IP BEFORE WiFi.begin()
-if (!WiFi.config(local_IP, gateway, subnet, dns)) {
-  Serial.println("Static IP configuration failed!");
-}
+```
+ESP32_CAM_Sketches/
+├── blindspot_config.h              ← Shared code (handlers, camera init, WiFi)
+├── blindspot_cam_LEFT/
+│   └── blindspot_cam_LEFT.ino     ← Flash to LEFT camera  → 10.92.111.188
+├── blindspot_cam_RIGHT/
+│   └── blindspot_cam_RIGHT.ino    ← Flash to RIGHT camera → 10.92.111.190
+└── blindspot_cam_REAR/
+    └── blindspot_cam_REAR.ino     ← Flash to REAR camera  → 10.92.111.189
 ```
 
-### 3. Flash each ESP32-CAM with a different IP:
-- **Left camera**:  `192.168.1.181`
-- **Right camera**: `192.168.1.182`
-- **Rear camera**:  `192.168.1.183`
+---
 
-### 4. Update `config.py` on the Raspberry Pi:
+## Quick Start
+
+### 1. Edit WiFi credentials in `blindspot_config.h`
+```cpp
+#define WIFI_SSID  "YOUR_WIFI_NAME"
+#define WIFI_PASS  "YOUR_WIFI_PASSWORD"
+```
+
+### 2. Verify the gateway IP in each `.ino` file
+```cpp
+IPAddress GATEWAY_IP(192, 168, 1, 1);   // ← Change to your router IP
+```
+Find it with: `ip route | grep default` (Linux/Pi) or `ipconfig` (Windows)
+
+### 3. Open the sketch folder in Arduino IDE
+- Open `blindspot_cam_LEFT/blindspot_cam_LEFT.ino`
+- Both files (`blindspot_config.h` and the `.ino`) must be in the **same folder**
+- Arduino IDE will automatically include the `.h` file
+
+### 4. Arduino IDE board settings
+| Setting | Value |
+|---|---|
+| Board | AI Thinker ESP32-CAM |
+| Partition Scheme | Huge APP (3MB No OTA / 1MB SPIFFS) |
+| CPU Frequency | 240MHz |
+| Flash Mode | QIO |
+| Flash Size | 4MB |
+| Upload Speed | 115200 |
+
+### 5. Flash each camera
+- Flash LEFT sketch  → LEFT  ESP32-CAM
+- Flash RIGHT sketch → RIGHT ESP32-CAM
+- Flash REAR sketch  → REAR  ESP32-CAM
+
+---
+
+## HTTP Endpoints (port 80)
+
+| Endpoint | Used by | Description |
+|---|---|---|
+| `GET /stream` | `sensors/camera.py` | MJPEG multipart stream (15 FPS, QVGA 320×240) |
+| `GET /capture` | `sensors/camera.py` | Single JPEG (polling fallback) |
+| `GET /id` | `sensors/scanner.py` | Identity JSON `{"position":"left","ip":"..."}` |
+| `GET /health` | `dashboard/app.py` | Liveness `{"status":"ok","uptime_ms":...}` |
+
+---
+
+## How Auto-Discovery Works
+
+```
+Raspberry Pi (main.py)
+    └─ scanner.py:discover_esp32_cameras()
+           1. Get local Pi IP  →  e.g. 192.168.1.100
+           2. Derive subnet    →  192.168.1.0/24
+           3. Exclude: Pi IP, gateway, network, broadcast
+           4. nmap -p 80 --open → finds all devices with port 80 open
+           5. For each device: GET /id  →  {"position": "left"|"right"|"rear"}
+           6. Assign stream URL → config.py CAMERA_PORTS[position]["url"]
+```
+
+If static IPs are set correctly in both the sketches and `config.py`, the
+system will find cameras immediately. nmap discovery is a fallback for when
+IPs change or are unknown.
+
+---
+
+## Verifying a Camera Works
+
+After flashing and powering on, open Serial Monitor (115200 baud).
+You should see:
+```
+═══════════════════════════════════════════════
+  BlindSpotGuard  |  Camera: left
+  Static IP: 10.92.111.188
+═══════════════════════════════════════════════
+[CAM] PSRAM found — high-quality mode
+[WiFi] Connected!
+[WiFi]   IP:      10.92.111.188
+[HTTP] Server started on port 80
+[HTTP]   /stream   → MJPEG feed (15 FPS, QVGA)
+[mDNS] Registered as http://blindspot-left.local
+  MJPEG stream : http://10.92.111.188/stream
+  Identity JSON: http://10.92.111.188/id
+═══════════════════════════════════════════════
+```
+
+Test in browser:
+- `http://10.92.111.188/id` → should return `{"position":"left",...}`
+- `http://10.92.111.188/stream` → should show live video
+
+---
+
+## Matching Python Config
+
+`config.py` on the Raspberry Pi must match:
 ```python
 CAMERA_PORTS = {
-    "left":  { "url": "http://192.168.1.181/stream", ... },
-    "right": { "url": "http://192.168.1.182/stream", ... },
-    "rear":  { "url": "http://192.168.1.183/stream", ... },
+    "left":  { "url": "http://10.92.111.188/stream", ... },
+    "right": { "url": "http://10.92.111.190/stream", ... },
+    "rear":  { "url": "http://10.92.111.189/stream", ... },
 }
 ```
 
-### 5. Finding Your Gateway IP
-- On Windows: `ipconfig` → look for "Default Gateway"
-- On Linux/Pi: `ip route | grep default`
-- Usually it's `192.168.1.1` or `192.168.0.1`
-
-## How to Find the Right Subnet
-Your static IPs must be in the **same subnet** as your router.
-If your router is `192.168.1.1`, use `192.168.1.xxx`.
-If your router is `10.132.20.1`, use `10.132.20.xxx`.
-
-Pick numbers above 200 to avoid conflicts with DHCP range.
-
-## Alternative: mDNS (Zero-Config Networking)
-If you can't set static IPs, flash each ESP32 with a unique mDNS hostname.
-The scanner.py on the Pi will automatically find them by name.
-See `esp32_cam_mdns.ino` for the mDNS-enabled sketch.
+Stream settings in `config.py` match the sketch:
+```python
+CAMERA = {
+    "frame_width":  320,    # FRAMESIZE_QVGA
+    "frame_height": 240,    # FRAMESIZE_QVGA
+    "fps":          15,     # STREAM_TARGET_FPS in sketch
+}
+```

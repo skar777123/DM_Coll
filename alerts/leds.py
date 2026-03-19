@@ -8,8 +8,12 @@ Three LEDs provide directional visual alerts on the dashboard:
   • Right LED → BCM 26
   • Rear LED  → BCM 13
 
-Supports solid-on and configurable flashing patterns via PWM.
-Falls back gracefully when RPi.GPIO is not available (PC development).
+Modes:
+  off    → LED is off
+  solid  → LED is permanently on  (caution zone)
+  flash  → LED flashes at led_flash_hz  (critical zone)
+
+Requires RPi.GPIO. Must run on a Raspberry Pi with real GPIO hardware.
 """
 
 from __future__ import annotations
@@ -19,11 +23,7 @@ import threading
 import time
 from typing import Dict, Optional
 
-try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
-except ImportError:
-    GPIO_AVAILABLE = False
+import RPi.GPIO as GPIO   # Real hardware required — must run on Raspberry Pi
 
 from config import LED_PINS, WARNING
 
@@ -38,17 +38,16 @@ class LED:
     """Single GPIO-driven LED with solid / flashing modes."""
 
     def __init__(self, name: str, pin: int) -> None:
-        self.name    = name
-        self.pin     = pin
-        self._state  = "off"    # 'off' | 'solid' | 'flash'
-        self._lock   = threading.Lock()
+        self.name   = name
+        self.pin    = pin
+        self._state = "off"     # 'off' | 'solid' | 'flash'
+        self._lock  = threading.Lock()
         self._thread: Optional[threading.Thread] = None
-        self._sim_on: bool = False  # for simulation feedback
+        self._sim_on: bool = False   # simulated physical state
 
-        if GPIO_AVAILABLE:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setwarnings(False)
-            GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setwarnings(False)
+        GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -74,8 +73,10 @@ class LED:
 
     def cleanup(self) -> None:
         self.off()
-        if GPIO_AVAILABLE:
+        try:
             GPIO.cleanup(self.pin)
+        except Exception:
+            pass
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
@@ -85,14 +86,15 @@ class LED:
                 return
             self._state = new_state
             if new_state == "flash":
-                if not (self._thread and self._thread.is_alive()):
+                if self._thread is None or not self._thread.is_alive():
                     self._thread = threading.Thread(
-                        target=self._flash_loop, name=f"led-{self.name}", daemon=True
+                        target=self._flash_loop,
+                        name=f"led-{self.name}",
+                        daemon=True,
                     )
                     self._thread.start()
-            elif new_state in ("off", "solid"):
-                # Flash thread will exit by checking _state
-                pass
+            # For 'off' and 'solid', the flash loop exits on its own
+            # (it checks self._state every half-period).
 
     def _flash_loop(self) -> None:
         half = _FLASH_PERIOD / 2
@@ -110,10 +112,7 @@ class LED:
 
     def _write(self, on: bool) -> None:
         self._sim_on = on
-        if GPIO_AVAILABLE:
-            GPIO.output(self.pin, GPIO.HIGH if on else GPIO.LOW)
-        else:
-            log.debug("LED [%s] → %s", self.name, "ON" if on else "OFF")
+        GPIO.output(self.pin, GPIO.HIGH if on else GPIO.LOW)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -136,7 +135,7 @@ class LEDController:
             name: LED(name=name, pin=pin)
             for name, pin in LED_PINS.items()
         }
-        log.info("LEDController initialised (GPIO=%s).", GPIO_AVAILABLE)
+        log.info("LEDController initialised.")
 
     def apply(self, position: str, mode: str) -> None:
         """

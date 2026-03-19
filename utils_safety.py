@@ -1,32 +1,53 @@
+"""
+utils_safety.py
+───────────────
+Safety helpers for fault-tolerant module loading.
 
-import sys
-import subprocess
+Running an SIGILL-prone import (e.g. numpy with AVX on ARMv7) inside
+the main process would kill the daemon. This helper runs the import in
+a child process instead, so a crash is isolated and detectable.
+"""
+
 import logging
+import subprocess
+import sys
 
 log = logging.getLogger(__name__)
 
+
 def is_module_safe(module_name: str) -> bool:
     """
-    Checks if a module can be imported without causing a SIGILL or other fatal errors.
-    Runs the import in a subprocess to protect the main process.
+    Returns True only if the module can be imported without fatal errors.
+
+    Runs the import inside a subprocess so that a SIGILL or other crash
+    does NOT propagate to the parent process.
+
+    :param module_name: Bare module name (e.g. ``'ultralytics'``).
+    :returns: True if safe to import, False otherwise.
     """
     try:
-        # Run a simple import command in a separate process
         result = subprocess.run(
             [sys.executable, "-c", f"import {module_name}"],
             capture_output=True,
-            timeout=15
+            timeout=15,
         )
         if result.returncode == 0:
             return True
-        if result.returncode == -4: # SIGILL
-            log.warning(f"Module '{module_name}' caused Illegal Instruction (SIGILL). It will be disabled.")
+        if result.returncode == -4:   # SIGILL
+            log.warning(
+                "Module '%s' caused Illegal Instruction (SIGILL). Disabled.",
+                module_name,
+            )
         else:
-            log.debug(f"Module '{module_name}' import failed with return code {result.returncode}")
+            log.debug(
+                "Module '%s' import failed (exit code %d).",
+                module_name,
+                result.returncode,
+            )
         return False
     except subprocess.TimeoutExpired:
-        log.warning(f"Module '{module_name}' import timed out. It will be disabled.")
+        log.warning("Module '%s' import timed out. Disabled.", module_name)
         return False
-    except Exception as e:
-        log.debug(f"Error checking module '{module_name}': {e}")
+    except Exception as exc:
+        log.debug("Error checking module '%s': %s", module_name, exc)
         return False

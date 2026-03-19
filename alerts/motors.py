@@ -3,16 +3,21 @@ motors.py
 ─────────
 Vibration Motor Controller for Raspberry Pi 4B.
 
-Two DC vibration motors provide haptic feedback in the seat/wheel:
-  • Left Motor  → BCM 20 (PWM-capable)
-  • Right Motor → BCM 21 (PWM-capable)
+Two DC vibration motors provide haptic feedback in the seat / wheel:
+  • Left Motor  → BCM 20  (PWM-capable)
+  • Right Motor → BCM 21  (PWM-capable)
 
-Supports:
-  • Off         — motor stopped
-  • Continuous  — motor always on (full PWM duty)
-  • Pulsed      — motor pulses at configured rate (for critical alerts)
+Modes:
+  off        → motor stopped
+  pulse      → motor cycles on/off at motor_pulse_hz (critical alert)
+  continuous → motor always on at given duty cycle
 
-Falls back gracefully when RPi.GPIO is unavailable (PC development).
+Semantic alert shortcuts:
+  left_threat()  → left motor pulses
+  right_threat() → right motor pulses
+  rear_threat()  → BOTH motors pulse simultaneously
+
+Requires RPi.GPIO. Must run on a Raspberry Pi with real GPIO hardware.
 """
 
 from __future__ import annotations
@@ -22,20 +27,16 @@ import threading
 import time
 from typing import Dict, Optional
 
-try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
-except ImportError:
-    GPIO_AVAILABLE = False
+import RPi.GPIO as GPIO   # Real hardware required — must run on Raspberry Pi
 
 from config import MOTOR_PINS, WARNING
 
 log = logging.getLogger(__name__)
 
-_PWM_FREQ       = WARNING["pwm_frequency_hz"]
-_DUTY_CAUTION   = WARNING["motor_duty_caution"]
-_DUTY_CRITICAL  = WARNING["motor_duty_critical"]
-_PULSE_PERIOD   = 1.0 / WARNING["motor_pulse_hz"]
+_PWM_FREQ      = WARNING["pwm_frequency_hz"]
+_DUTY_CAUTION  = WARNING["motor_duty_caution"]
+_DUTY_CRITICAL = WARNING["motor_duty_critical"]
+_PULSE_PERIOD  = 1.0 / WARNING["motor_pulse_hz"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,18 +47,17 @@ class VibrationMotor:
     def __init__(self, name: str, pin: int) -> None:
         self.name   = name
         self.pin    = pin
-        self._state = "off"
+        self._state = "off"     # 'off' | 'pulse' | 'continuous'
         self._lock  = threading.Lock()
         self._thread: Optional[threading.Thread] = None
         self._pwm   = None
         self._sim_active: bool = False
 
-        if GPIO_AVAILABLE:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setwarnings(False)
-            GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
-            self._pwm = GPIO.PWM(pin, _PWM_FREQ)
-            self._pwm.start(0)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setwarnings(False)
+        GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+        self._pwm = GPIO.PWM(pin, _PWM_FREQ)
+        self._pwm.start(0)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -84,9 +84,12 @@ class VibrationMotor:
 
     def cleanup(self) -> None:
         self.off()
-        if GPIO_AVAILABLE and self._pwm:
+        if self._pwm is not None:
             self._pwm.stop()
+        try:
             GPIO.cleanup(self.pin)
+        except Exception:
+            pass
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
@@ -96,9 +99,11 @@ class VibrationMotor:
                 return
             self._state = new_state
             if new_state == "pulse":
-                if not (self._thread and self._thread.is_alive()):
+                if self._thread is None or not self._thread.is_alive():
                     self._thread = threading.Thread(
-                        target=self._pulse_loop, name=f"motor-{self.name}", daemon=True
+                        target=self._pulse_loop,
+                        name=f"motor-{self.name}",
+                        daemon=True,
                     )
                     self._thread.start()
 
@@ -118,11 +123,8 @@ class VibrationMotor:
 
     def _set_duty(self, duty: int) -> None:
         self._sim_active = duty > 0
-        if GPIO_AVAILABLE and self._pwm:
+        if self._pwm is not None:
             self._pwm.ChangeDutyCycle(max(0, min(100, duty)))
-        else:
-            if duty > 0:
-                log.debug("MOTOR [%s] duty=%d%%", self.name, duty)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,11 +133,11 @@ class MotorController:
     """
     Manages both left and right vibration motors.
 
-    Provides semantic methods matching the project specification:
+    Semantic methods:
       - ``left_threat()``  → left motor pulses
       - ``right_threat()`` → right motor pulses
       - ``rear_threat()``  → BOTH motors pulse simultaneously
-      - ``all_off()``      → stop all
+      - ``all_off()``      → stop all motors
 
     Usage::
 
@@ -150,7 +152,7 @@ class MotorController:
             name: VibrationMotor(name=name, pin=pin)
             for name, pin in MOTOR_PINS.items()
         }
-        log.info("MotorController initialised (GPIO=%s).", GPIO_AVAILABLE)
+        log.info("MotorController initialised.")
 
     # ── Semantic Alert Methods ────────────────────────────────────────────────
 
@@ -163,7 +165,7 @@ class MotorController:
         self._motors["right"].pulse()
 
     def rear_threat(self) -> None:
-        """Both motors pulse for rear collision threat."""
+        """Both motors pulse simultaneously for rear collision threat."""
         self._motors["left"].pulse()
         self._motors["right"].pulse()
 
@@ -171,7 +173,7 @@ class MotorController:
         for m in self._motors.values():
             m.off()
 
-    # ── Generic ───────────────────────────────────────────────────────────────
+    # ── Generic Control ───────────────────────────────────────────────────────
 
     def apply(self, position: str, mode: str) -> None:
         """
@@ -181,11 +183,15 @@ class MotorController:
         :param mode:     'off' | 'pulse' | 'continuous'
         """
         motor = self._motors.get(position)
-        if not motor:
+        if motor is None:
             return
-        {"off": motor.off, "pulse": motor.pulse, "continuous": motor.continuous}.get(
-            mode, motor.off
-        )()
+            
+        if mode == "pulse":
+            motor.pulse()
+        elif mode == "continuous":
+            motor.continuous()
+        else:
+            motor.off()
 
     def get_status(self) -> Dict[str, dict]:
         return {

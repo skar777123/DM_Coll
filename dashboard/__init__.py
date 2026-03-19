@@ -1,1 +1,3 @@
-"""Dashboard package — Flask + SocketIO live web UI."""
+"""
+dashboard/__init__.py
+"""

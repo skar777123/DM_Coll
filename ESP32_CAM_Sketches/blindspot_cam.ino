@@ -1,7 +1,7 @@
 /*
  * ═══════════════════════════════════════════════════════════════
  *  ESP32-CAM — LEFT Camera (BlindSpotGuard)
- *  Static IP: 192.168.1.181
+ *  Static IP: 10.92.111.188
  *  mDNS Hostname: blindspot-left.local
  * ═══════════════════════════════════════════════════════════════
  * 
@@ -13,12 +13,12 @@
  *  
  *  For RIGHT camera: Copy this file, change:
  *    - CAMERA_POSITION to "right"
- *    - STATIC_IP to {192, 168, 1, 182}
+ *    - STATIC_IP to {10, 92, 111, 190}
  *    - MDNS_HOSTNAME to "blindspot-right"
  *
  *  For REAR camera: Copy this file, change:
  *    - CAMERA_POSITION to "rear"
- *    - STATIC_IP to {192, 168, 1, 183}
+ *    - STATIC_IP to {10, 92, 111, 189}
  *    - MDNS_HOSTNAME to "blindspot-rear"
  * ═══════════════════════════════════════════════════════════════
  */
@@ -39,8 +39,8 @@ const char* CAMERA_POSITION = "left";          // "left" | "right" | "rear"
 const char* MDNS_HOSTNAME   = "blindspot-left"; // mDNS name (no .local suffix)
 
 // Static IP configuration (CHANGE TO MATCH YOUR NETWORK!)
-IPAddress STATIC_IP(192, 168, 1, 181);         // ← Unique per camera
-IPAddress GATEWAY_IP(192, 168, 1, 1);          // ← Your router IP
+IPAddress STATIC_IP(10, 92, 111, 188);         // ← Unique per camera
+IPAddress GATEWAY_IP(10, 92, 111, 156);          // ← Your router IP
 IPAddress SUBNET_MASK(255, 255, 255, 0);
 IPAddress DNS_IP(8, 8, 8, 8);
 

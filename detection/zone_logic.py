@@ -3,22 +3,23 @@ zone_logic.py
 ─────────────
 Threat Evaluation Engine — Sensor Fusion Decision Making.
 
-Combines ultrasonic distance readings and camera object-detection
-results to determine the zone (safe / caution / critical) for each
-direction, and issues the corresponding LED + motor commands.
+Combines ultrasonic distance readings and camera object-detection results
+to determine the zone (safe / caution / critical) for each direction and
+issues the corresponding LED + motor commands.
 
-Decision table (Vision Active — AI sees the cameras)
+Decision table  (Vision Active — AI sees the cameras)
 ──────────────────────────────────────────────────────
 Zone       Condition
 ──────────────────────────────────────────────────────
 critical   Vehicle + fast approach + dist ≤ 100 cm
-caution    Vehicle detected + dist ≤ 200 cm (or) camera threat present
+caution    Vehicle detected + dist ≤ 200 cm
+           OR camera detects a threat approach
 safe       All clear / object far away / non-vehicle
 
-Decision table (Vision Inactive — degraded safety mode)
-──────────────────────────────────────────────────────
+Decision table  (Vision Inactive — degraded safety mode)
+──────────────────────────────────────────────────────────
 Zone       Ultrasonic Distance
-──────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────
 critical   ≤ 100 cm
 caution    ≤ 200 cm
 safe       > 300 cm
@@ -31,7 +32,7 @@ Outputs per direction
 safe     → LED off,   motor off
 caution  → LED solid, motor off
 critical → LED flash, motor pulse
-offline  → LED off,   motor off (no false alarms)
+offline  → LED off,   motor off  (no false alarms)
 """
 
 from __future__ import annotations
@@ -53,39 +54,41 @@ DIRECTIONS = ("left", "right", "rear")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Data-classes
+# ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class DirectionState:
-    """Holds the evaluated state for one direction."""
-    direction:    str
-    zone:         str = "safe"           # 'safe' | 'caution' | 'critical' | 'offline'
-    distance_cm:  float = 999.0
-    camera_threat: bool = False
-    is_vehicle:    bool = False
-    is_moving:     bool = False
-    vision_active: bool = False
-    led_mode:     str = "off"            # 'off' | 'solid' | 'flash'
-    motor_mode:   str = "off"            # 'off' | 'pulse'
-    updated_at:   float = field(default_factory=time.time)
+    """Evaluated state for one direction."""
+    direction:     str
+    zone:          str   = "safe"    # 'safe' | 'caution' | 'critical' | 'offline'
+    distance_cm:   float = 999.0
+    camera_threat: bool  = False
+    is_vehicle:    bool  = False
+    is_moving:     bool  = False
+    vision_active: bool  = False
+    led_mode:      str   = "off"     # 'off' | 'solid' | 'flash'
+    motor_mode:    str   = "off"     # 'off' | 'pulse'
+    updated_at:    float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
         return {
             "direction":     self.direction,
             "zone":          self.zone,
-            "distance_cm":   round(self.distance_cm, 1),
-            "camera_threat": self.camera_threat,
-            "is_vehicle":    self.is_vehicle,
-            "is_moving":     self.is_moving,
-            "vision_active": self.vision_active,
+            "distance_cm":   round(float(self.distance_cm), 1),
+            "camera_threat": bool(self.camera_threat),
+            "is_vehicle":    bool(self.is_vehicle),
+            "is_moving":     bool(self.is_moving),
+            "vision_active": bool(self.vision_active),
             "led_mode":      self.led_mode,
             "motor_mode":    self.motor_mode,
-            "updated_at":    self.updated_at,
+            "updated_at":    float(self.updated_at),
         }
 
 
 @dataclass
 class SystemState:
-    """Global snapshot of all directions."""
+    """Global snapshot — all directions."""
     left:      DirectionState = field(default_factory=lambda: DirectionState("left"))
     right:     DirectionState = field(default_factory=lambda: DirectionState("right"))
     rear:      DirectionState = field(default_factory=lambda: DirectionState("rear"))
@@ -96,7 +99,7 @@ class SystemState:
 
     def to_dict(self) -> dict:
         return {
-            "timestamp": self.timestamp,
+            "timestamp": float(self.timestamp),
             "left":      self.left.to_dict(),
             "right":     self.right.to_dict(),
             "rear":      self.rear.to_dict(),
@@ -104,12 +107,14 @@ class SystemState:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  ZoneEvaluator
+# ─────────────────────────────────────────────────────────────────────────────
 
 class ZoneEvaluator:
     """
-    Core decision engine — fuses sensor data and drives output devices.
+    Core rule-based decision engine — fuses sensor data and drives output devices.
 
-    Designed to be called at ~16 Hz from the main control loop.
+    Called at ~16 Hz from the main control loop.
 
     Usage::
 
@@ -118,14 +123,13 @@ class ZoneEvaluator:
             ultrasonic_data = ultra_manager.get_all()
             camera_frames   = cam_manager.get_all_frames()
             state = evaluator.evaluate(ultrasonic_data, camera_frames)
-            dashboard.emit(state)
     """
 
     def __init__(self, leds: "LEDController", motors: "MotorController") -> None:
-        self._leds   = leds
-        self._motors = motors
-        self._state  = SystemState()
-        self._overrides: Dict[str, str] = {}   # direction -> zone override
+        self._leds     = leds
+        self._motors   = motors
+        self._state    = SystemState()
+        self._overrides: Dict[str, str] = {}   # direction → zone override
         log.info("ZoneEvaluator ready.")
 
     # ── Public ────────────────────────────────────────────────────────────────
@@ -135,7 +139,7 @@ class ZoneEvaluator:
         return self._state
 
     def set_override(self, direction: str, zone: str) -> None:
-        """Manually force a zone for testing (or clear it)."""
+        """Force a zone manually (for testing). zone='safe' clears override."""
         if direction == "all":
             if zone == "safe":
                 self._overrides.clear()
@@ -157,26 +161,25 @@ class ZoneEvaluator:
         """
         Evaluate all directions and update output devices.
 
-        :param ultrasonic_data: Output of ``UltrasonicManager.get_all()``
-        :param camera_frames:   Output of ``CameraManager.get_all_frames()``
+        :param ultrasonic_data: ``UltrasonicManager.get_all()`` output
+        :param camera_frames:   ``CameraManager.get_all_frames()`` output
         :returns: Updated SystemState
         """
         new_state = SystemState(timestamp=time.time())
 
         for direction in DIRECTIONS:
-            u   = ultrasonic_data.get(direction, {})
-            cf  = camera_frames.get(direction)
+            u  = ultrasonic_data.get(direction, {})
+            cf = camera_frames.get(direction)
 
-            dist          = u.get("distance_cm", 999.0)
-            cam_threat    = cf.threat if cf else False
-            is_vehicle    = cf.is_vehicle if cf else False
-            is_moving     = cf.is_moving if cf else False
-            vision_active = cf.vision_active if cf else False
-            
-            dir_state     = self._evaluate_direction(
+            dist          = float(u.get("distance_cm", 999.0))
+            cam_threat    = bool(cf.threat)        if cf else False
+            is_vehicle    = bool(cf.is_vehicle)    if cf else False
+            is_moving     = bool(cf.is_moving)     if cf else False
+            vision_active = bool(cf.vision_active) if cf else False
+
+            dir_state = self._evaluate_direction(
                 direction, dist, cam_threat, is_vehicle, is_moving, vision_active
             )
-
             setattr(new_state, direction, dir_state)
 
         self._state = new_state
@@ -186,11 +189,16 @@ class ZoneEvaluator:
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _evaluate_direction(
-        self, direction: str, distance_cm: float, cam_threat: bool,
-        is_vehicle: bool = False, is_moving: bool = False, vision_active: bool = False
+        self,
+        direction:     str,
+        distance_cm:   float,
+        cam_threat:    bool,
+        is_vehicle:    bool  = False,
+        is_moving:     bool  = False,
+        vision_active: bool  = False,
     ) -> DirectionState:
 
-        # ── Handle offline sensor (distance == -1) ─────────────────────────
+        # ── Offline sensor (distance_cm == -1) ────────────────────────────────
         if distance_cm < 0:
             return DirectionState(
                 direction=direction,
@@ -204,54 +212,41 @@ class ZoneEvaluator:
                 motor_mode="off",
             )
 
-        # ── Zone determination (with override support) ─────────────────────
+        # ── Zone determination (override takes priority) ───────────────────────
         if direction in self._overrides:
             zone = self._overrides[direction]
-            # Fake distance if override is active
-            if zone == "critical": distance_cm = min(distance_cm, 50.0)
-            elif zone == "caution": distance_cm = min(distance_cm, 150.0)
-        else:
-            # ── Intelligent Alerting Logic ─────────────────────────────────
-            if vision_active:
-                # AI is working — use combined sensor fusion:
-                #
-                # CRITICAL: Vehicle + fast approach + inside critical zone
-                # CAUTION:  Vehicle detected nearby (≤ caution zone)
-                #           OR camera detecting a threat approach
-                # SAFE:     Everything clear
-                #
-                # SAFETY FALLBACK: Even if AI sees no vehicle, still alert
-                #                  on pure ultrasonic distance if too close.
-                #                  This prevents silent failures.
-                
-                if is_vehicle and cam_threat and distance_cm <= ZONE["critical"]:
-                    zone = "critical"
-                elif is_vehicle and distance_cm <= ZONE["caution"]:
-                    zone = "caution"
-                elif cam_threat and distance_cm <= ZONE["caution"]:
-                    zone = "caution"
-                elif distance_cm <= ZONE["critical"]:
-                    # SAFETY FALLBACK: Something is dangerously close even if
-                    # AI doesn't classify it as a vehicle — still warn!
-                    zone = "critical"
-                elif distance_cm <= ZONE["caution"]:
-                    # SAFETY FALLBACK: Object in caution range, AI doesn't
-                    # see a vehicle — mild caution (could be a pedestrian, wall, etc.)
-                    zone = "caution"
-                else:
-                    zone = "safe"
+            if zone == "critical":
+                distance_cm = min(distance_cm, 50.0)
+            elif zone == "caution":
+                distance_cm = min(distance_cm, 150.0)
+        elif vision_active:
+            # AI is working — use intelligent sensor fusion
+            #
+            # SAFETY FALLBACK: even if AI sees no vehicle, still alert
+            # on ultrasonic distance alone to prevent silent failures.
+            if is_vehicle and cam_threat and distance_cm <= ZONE["critical"]:
+                zone = "critical"
+            elif is_vehicle and distance_cm <= ZONE["caution"]:
+                zone = "caution"
+            elif cam_threat and distance_cm <= ZONE["caution"]:
+                zone = "caution"
+            elif distance_cm <= ZONE["critical"]:
+                zone = "critical"   # safety fallback — something dangerously close
+            elif distance_cm <= ZONE["caution"]:
+                zone = "caution"    # safety fallback — object in caution range
             else:
-                # DEGRADED MODE: AI vision is unavailable (safety fallback)
-                # Fallback to pure ultrasonic distance readings
-                if distance_cm <= ZONE["critical"]:
-                    zone = "critical"
-                elif distance_cm <= ZONE["caution"]:
-                    zone = "caution"
-                else:
-                    zone = "safe"
+                zone = "safe"
+        else:
+            # DEGRADED MODE: pure ultrasonic distance fallback
+            if distance_cm <= ZONE["critical"]:
+                zone = "critical"
+            elif distance_cm <= ZONE["caution"]:
+                zone = "caution"
+            else:
+                zone = "safe"
 
-        # ── Map zone to output modes ───────────────────────────────────────
-        if zone == "safe" or zone == "offline":
+        # ── Map zone → output modes ────────────────────────────────────────────
+        if zone in ("safe", "offline"):
             led_mode   = "off"
             motor_mode = "off"
         elif zone == "caution":
@@ -274,26 +269,24 @@ class ZoneEvaluator:
         )
 
     def _apply_outputs(self, state: SystemState) -> None:
-        """Push LED and motor commands based on evaluated zones."""
+        """Push LED and motor commands based on the evaluated zones."""
+
+        # LEDs — per direction (always independent)
         for direction in DIRECTIONS:
-            dir_state = state.get(direction)
-            if not dir_state:
-                continue
+            ds = state.get(direction)
+            if ds:
+                self._leds.apply(direction, ds.led_mode)
 
-            # LEDs — per direction
-            self._leds.apply(direction, dir_state.led_mode)
-
-        # Motors — semantic grouping
-        # We process each motor independently to allow simultaneous side alerts
-        left_crit  = (state.left.zone == "critical")
+        # Motors — semantic grouping:
+        #   Rear critical  → pulses BOTH motors (full-body alert)
+        #   Left/right     → handled independently and simultaneously
+        left_crit  = (state.left.zone  == "critical")
         right_crit = (state.right.zone == "critical")
-        rear_crit  = (state.rear.zone == "critical")
+        rear_crit  = (state.rear.zone  == "critical")
 
-        # Rear critical → pulses both motors
         if rear_crit:
-            self._motors.rear_threat()
+            self._motors.rear_threat()   # both motors pulse
         else:
-            # Handle sides independently
             if left_crit:
                 self._motors.left_threat()
             else:

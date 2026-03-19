@@ -15,33 +15,34 @@
 
 'use strict';
 
-/* ═══════════════════════ CONFIG ═══════════════════════════ */
+/* ══════════════════════════════════════ CONFIG ══════════════════════════════════════ */
 const ZONE_SAFE     = 'safe';
 const ZONE_CAUTION  = 'caution';
 const ZONE_CRITICAL = 'critical';
+const ZONE_OFFLINE  = 'offline';
 
 const MAX_LOG_ENTRIES = 120;
 const ALERT_DURATION  = 3500;   // ms
 
-/* ═══════════════════════ STATE ════════════════════════════ */
-let totalAlerts   = 0;
-let updateCount   = 0;
-let uptimeStart   = Date.now();
-let lastUpdateMin = Date.now();
+/* ══════════════════════════════════════ STATE ═══════════════════════════════════════ */
+let totalAlerts    = 0;
+let updateCount    = 0;
+let uptimeStart    = Date.now();
 let updatesThisMin = 0;
-let alertTimeout  = null;
-let connected     = false;
+let alertTimeout   = null;
+let connected      = false;
 
-/* ═══════════════════════ SOCKET ═══════════════════════════ */
+/* ══════════════════════════════════════ SOCKET ══════════════════════════════════════ */
 const socket = io({ transports: ['websocket', 'polling'] });
 
 socket.on('connect', () => {
   connected = true;
   setConnectionState('connected');
   log('Connected to BlindSpotGuard Pi.', 'info');
-  socket.emit('request_frame', { position: 'left' });
+  // Request initial camera frames
+  socket.emit('request_frame', { position: 'left'  });
   socket.emit('request_frame', { position: 'right' });
-  socket.emit('request_frame', { position: 'rear' });
+  socket.emit('request_frame', { position: 'rear'  });
 });
 
 socket.on('disconnect', () => {
@@ -74,18 +75,19 @@ setInterval(() => {
   });
 }, 5000);
 
-/* Reset updates/min counter */
+/* Reset updates/min counter every 60 s */
 setInterval(() => {
   document.getElementById('statUpdates').textContent = updatesThisMin;
   updatesThisMin = 0;
-}, 60000);
+}, 60_000);
 
-/* ═══════════════════════ STATE UPDATE ═════════════════════ */
+
+/* ══════════════════════════════════════ STATE UPDATE ════════════════════════════════ */
 function applyStateUpdate(data) {
   if (!data) return;
 
   const dirs = ['left', 'right', 'rear'];
-  let anyCritical = false;
+  let anyCritical  = false;
   let criticalDirs = [];
 
   dirs.forEach(dir => {
@@ -93,7 +95,11 @@ function applyStateUpdate(data) {
     if (!d) return;
 
     const prevZone = getZone(dir);
-    setZone(dir, d.zone, d.distance_cm, d.camera_threat, d.led_mode, d.motor_mode, d.is_vehicle, d.is_moving, d.vision_active);
+    setZone(
+      dir, d.zone, d.distance_cm,
+      d.camera_threat, d.led_mode, d.motor_mode,
+      d.is_vehicle, d.is_moving, d.vision_active,
+    );
 
     if (d.zone === ZONE_CRITICAL && prevZone !== ZONE_CRITICAL) {
       anyCritical = true;
@@ -103,7 +109,7 @@ function applyStateUpdate(data) {
       log(`⚠ CRITICAL: ${dir.toUpperCase()} | ${d.distance_cm.toFixed(1)} cm`, 'critical');
     } else if (d.zone === ZONE_CAUTION && prevZone === ZONE_SAFE) {
       log(`⚡ CAUTION: ${dir.toUpperCase()} | ${d.distance_cm.toFixed(1)} cm`, 'caution');
-    } else if (d.zone === ZONE_SAFE && prevZone !== ZONE_SAFE) {
+    } else if (d.zone === ZONE_SAFE && prevZone !== ZONE_SAFE && prevZone !== ZONE_OFFLINE) {
       log(`✔ ${dir.toUpperCase()} cleared — Safe`, 'safe');
     }
   });
@@ -112,13 +118,14 @@ function applyStateUpdate(data) {
     showAlert(`⚠ CRITICAL THREAT — ${criticalDirs.join(' & ')}`);
   }
 
-  // Rear motor indicators
+  // Rear motor indicators — both fire simultaneously for rear threat
   const rearMotorActive = data.rear && data.rear.motor_mode === 'pulse';
   setIndicatorDot('motor-rear-l', rearMotorActive ? 'active-motor' : '');
   setIndicatorDot('motor-rear-r', rearMotorActive ? 'active-motor' : '');
 }
 
-/* Zone elements cache */
+
+/* ══════════════════════════════════════ ZONE ELEMENTS ═══════════════════════════════ */
 const _zoneCache = {};
 function zoneEl(id) {
   if (!_zoneCache[id]) _zoneCache[id] = document.getElementById(id);
@@ -127,11 +134,11 @@ function zoneEl(id) {
 
 function getZone(dir) {
   const card = zoneEl('card-' + dir);
-  if (!card) return 'safe';
+  if (!card) return ZONE_SAFE;
   for (const cls of card.classList) {
     if (cls.startsWith('zone-')) return cls.replace('zone-', '');
   }
-  return 'safe';
+  return ZONE_SAFE;
 }
 
 function setZone(dir, zone, distCm, camThreat, ledMode, motorMode, isVehicle, isMoving, visionActive) {
@@ -142,16 +149,17 @@ function setZone(dir, zone, distCm, camThreat, ledMode, motorMode, isVehicle, is
   const arcEl   = zoneEl('arc-' + dir);
   if (!card) return;
 
-  // Card class
+  // Card zone class
   card.className = card.className.replace(/zone-\w+/g, '').trim();
   card.classList.add('zone-' + zone);
-  // Ensure base classes are present
   if (!card.classList.contains('monitor-card')) card.classList.add('monitor-card');
-  if (dir === 'rear' && !card.classList.contains('monitor-card--rear')) card.classList.add('monitor-card--rear');
+  if (dir === 'rear' && !card.classList.contains('monitor-card--rear')) {
+    card.classList.add('monitor-card--rear');
+  }
 
-  // Distance
+  // Distance display
   if (distEl) {
-    if (zone === 'offline') {
+    if (zone === ZONE_OFFLINE) {
       distEl.textContent = 'OFFLINE';
       distEl.style.color = 'var(--text-mute, #666)';
     } else {
@@ -160,27 +168,23 @@ function setZone(dir, zone, distCm, camThreat, ledMode, motorMode, isVehicle, is
     }
   }
 
-  // Progress bar
+  // Progress bar (inverted: closer = fuller bar)
   if (barEl) {
-    if (zone === 'offline') {
-      barEl.style.width = '0%';
+    if (zone === ZONE_OFFLINE) {
+      barEl.style.width   = '0%';
       barEl.style.opacity = '0.3';
     } else {
       const pct = Math.max(2, Math.min(100, ((400 - distCm) / 400) * 100));
-      barEl.style.width = pct + '%';
+      barEl.style.width   = pct + '%';
       barEl.style.opacity = '1';
     }
   }
 
-  // Badge
-  if (badgeEl) {
-    badgeEl.textContent = zone.toUpperCase();
-  }
+  // Zone badge text
+  if (badgeEl) badgeEl.textContent = zone.toUpperCase();
 
-  // Vehicle arc
-  if (arcEl) {
-    arcEl.className = `threat-arc arc-${dir} zone-${zone}`;
-  }
+  // Vehicle radar arc
+  if (arcEl) arcEl.className = `threat-arc arc-${dir} zone-${zone}`;
 
   // LED indicator
   const ledDot = zoneEl('led-' + dir);
@@ -189,26 +193,22 @@ function setZone(dir, zone, distCm, camThreat, ledMode, motorMode, isVehicle, is
       (ledMode === 'flash' ? ' flash-led' : ledMode === 'solid' ? ' active-led' : '');
   }
 
-  // Motor indicator (left/right only — rear handled separately)
+  // Motor indicator (left/right only — rear handled separately in applyStateUpdate)
   if (dir !== 'rear') {
     setIndicatorDot('motor-' + dir, motorMode === 'pulse' ? 'active-motor' : '');
   }
 
-  // Camera vision status indicator
+  // Camera / vision status indicator
   let camClass = '';
-  if (camThreat) {
-    camClass = 'active-cam';
-  } else if (visionActive) {
-    camClass = 'vision-ok';
-  } else {
-    camClass = 'vision-off';
-  }
+  if (camThreat)       camClass = 'active-cam';
+  else if (visionActive) camClass = 'vision-ok';
+  else                 camClass = 'vision-off';
   setIndicatorDot('cam-threat-' + dir, camClass);
-  
-  // Vehicle indicator
+
+  // Vehicle detected indicator
   setIndicatorDot('is-vehicle-' + dir, isVehicle ? 'active-vehicle' : '');
-  
-  // Moving indicator
+
+  // Object moving indicator
   setIndicatorDot('is-moving-' + dir, isMoving ? 'active-moving' : '');
 }
 
@@ -216,88 +216,90 @@ function setIndicatorDot(id, extraClass) {
   const el = zoneEl(id);
   if (!el) return;
   el.className = 'ind-dot' + (extraClass ? ' ' + extraClass : '');
-  // Preserve original type class
-  if (id.startsWith('led-'))           el.classList.add('led-dot');
-  else if (id.startsWith('motor-'))    el.classList.add('motor-dot');
-  else if (id.startsWith('cam-'))      el.classList.add('cam-dot');
+  // Restore base type class
+  if (id.startsWith('led-'))            el.classList.add('led-dot');
+  else if (id.startsWith('motor-'))     el.classList.add('motor-dot');
+  else if (id.startsWith('cam-'))       el.classList.add('cam-dot');
   else if (id.startsWith('is-vehicle')) el.classList.add('vehicle-dot');
   else if (id.startsWith('is-moving'))  el.classList.add('moving-dot');
 }
 
-/* ═══════════════════════ CAMERA FRAMES ════════════════════ */
+
+/* ══════════════════════════════════════ CAMERA FRAMES ═══════════════════════════════ */
 const _camElements = {
-  left:  { img: null, overlay: null, det: null, card: null, status: null },
-  right: { img: null, overlay: null, det: null, card: null, status: null },
-  rear:  { img: null, overlay: null, det: null, card: null, status: null },
+  left:  { img: null, overlay: null, det: null, card: null },
+  right: { img: null, overlay: null, det: null, card: null },
+  rear:  { img: null, overlay: null, det: null, card: null },
 };
+
 function initCamRefs() {
-  ['left','right','rear'].forEach(pos => {
-    const p = pos.charAt(0).toUpperCase() + pos.slice(1);
-    _camElements[pos].img     = document.getElementById('cam' + p);
-    _camElements[pos].overlay = document.getElementById('camOverlay' + p);
-    _camElements[pos].det     = document.getElementById('camDet' + p);
-    _camElements[pos].card    = document.getElementById('card-' + pos);
+  ['left', 'right', 'rear'].forEach(pos => {
+    const P = pos.charAt(0).toUpperCase() + pos.slice(1);
+    _camElements[pos].img     = document.getElementById('cam'        + P);
+    _camElements[pos].overlay = document.getElementById('camOverlay' + P);
+    _camElements[pos].det     = document.getElementById('camDet'     + P);
+    _camElements[pos].card    = document.getElementById('card-'      + pos);
   });
 }
 
 function applyFrame(data) {
   if (!data || !data.position) return;
-  const pos = data.position;
-  const refs = _camElements[pos];
+  const refs = _camElements[data.position];
   if (!refs || !refs.img) return;
 
-  // Update image
+  // Update live image
   if (data.frame_b64) {
     refs.img.src = 'data:image/jpeg;base64,' + data.frame_b64;
     if (refs.overlay) refs.overlay.classList.add('hidden');
   }
 
-  // Threat border/glow
+  // Threat border / glow
   if (refs.card) {
     refs.card.classList.toggle('threat-active', !!data.threat);
   }
 
-  // Detections
+  // Detection chips
   if (refs.det && data.detections) {
     if (data.detections.length === 0) {
       refs.det.innerHTML = '<span style="color:var(--text-mute)">No objects</span>';
     } else {
       refs.det.innerHTML = data.detections
-        .map(d => {
-          return `<span class="det-chip">${d.label} ${Math.round(d.confidence * 100)}%</span>`;
-        })
+        .map(d => `<span class="det-chip">${d.label} ${Math.round(d.confidence * 100)}%</span>`)
         .join('');
     }
   }
 }
 
-/* ═══════════════════════ EVENT LOG ════════════════════════ */
-const LOG_TYPES = { info: 'log-info', caution: 'log-caution', critical: 'log-critical', safe: 'log-safe' };
+
+/* ══════════════════════════════════════ EVENT LOG ═══════════════════════════════════ */
+const LOG_TYPES = {
+  info:     'log-info',
+  caution:  'log-caution',
+  critical: 'log-critical',
+  safe:     'log-safe',
+};
 
 function log(message, type = 'info') {
   const container = document.getElementById('eventLog');
   if (!container) return;
-  const now      = new Date();
-  const ts       = now.toTimeString().slice(0, 8);
-  const entry    = document.createElement('div');
-  entry.className = 'log-entry ' + (LOG_TYPES[type] || 'log-info');
+  const ts    = new Date().toTimeString().slice(0, 8);
+  const entry = document.createElement('div');
+  entry.className  = 'log-entry ' + (LOG_TYPES[type] || 'log-info');
   entry.textContent = `[${ts}] ${message}`;
   container.appendChild(entry);
-  // Auto-scroll
   container.scrollTop = container.scrollHeight;
-  // Trim old entries
   while (container.children.length > MAX_LOG_ENTRIES) {
     container.removeChild(container.firstChild);
   }
 }
 
 document.getElementById('btnClearLog').addEventListener('click', () => {
-  const container = document.getElementById('eventLog');
-  container.innerHTML = '';
+  document.getElementById('eventLog').innerHTML = '';
   log('Log cleared.', 'info');
 });
 
-/* ═══════════════════════ ALERT BANNER ═════════════════════ */
+
+/* ══════════════════════════════════════ ALERT BANNER ════════════════════════════════ */
 function showAlert(message) {
   const banner = document.getElementById('alertBanner');
   const text   = document.getElementById('alertText');
@@ -308,21 +310,22 @@ function showAlert(message) {
   alertTimeout = setTimeout(() => banner.classList.remove('visible'), ALERT_DURATION);
 }
 
-/* ═══════════════════════ CONNECTION UI ════════════════════ */
+
+/* ══════════════════════════════════════ CONNECTION UI ═══════════════════════════════ */
 function setConnectionState(state) {
   const badge = document.getElementById('systemBadge');
   const text  = document.getElementById('systemStatusText');
   if (!badge || !text) return;
-  badge.className = 'system-badge ' + state;
+  badge.className  = 'system-badge ' + state;
   text.textContent = state === 'connected' ? 'SYSTEM ONLINE' : 'CONNECTING…';
 }
 
-/* ═══════════════════════ CLOCK & UPTIME ═══════════════════ */
+
+/* ══════════════════════════════════════ CLOCK & UPTIME ══════════════════════════════ */
 function updateClock() {
   const now = new Date();
-  const time = now.toTimeString().slice(0, 8);
-  const el = document.getElementById('clockDisplay');
-  if (el) el.textContent = time;
+  const el  = document.getElementById('clockDisplay');
+  if (el) el.textContent = now.toTimeString().slice(0, 8);
 
   const elapsed = Math.floor((Date.now() - uptimeStart) / 1000);
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
@@ -333,18 +336,23 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
-/* ═══════════════════════ MANUAL TEST ══════════════════════ */
+
+/* ══════════════════════════════════════ MANUAL OVERRIDE ════════════════════════════ */
 function testOverride(direction, zone) {
   fetch('/api/override', {
-    method: 'POST',
+    method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ direction, zone }),
-  }).then(r => r.json()).then(d => {
-    if (d.ok) log(`Test triggered: ${direction} → ${zone}`, zone === 'safe' ? 'safe' : 'critical');
-  }).catch(e => log('Override error: ' + e.message, 'caution'));
+    body:    JSON.stringify({ direction, zone }),
+  })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) log(`Test triggered: ${direction} → ${zone}`, zone === 'safe' ? 'safe' : 'critical');
+    })
+    .catch(e => log('Override error: ' + e.message, 'caution'));
 }
 
-/* ═══════════════════════ INIT ═════════════════════════════ */
+
+/* ══════════════════════════════════════ INIT ═══════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
   initCamRefs();
   log('BlindSpotGuard Dashboard loaded.', 'info');

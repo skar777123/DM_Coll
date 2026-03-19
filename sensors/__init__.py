@@ -1,1 +1,6 @@
-"""Sensors package — Ultrasonic + ESP32-CAM serial readers."""
+"""
+sensors/__init__.py
+"""
+
+from sensors.ultrasonic import UltrasonicManager, UltrasonicSensor
+from sensors.camera     import CameraManager, CameraStream, CameraFrame, Detection
