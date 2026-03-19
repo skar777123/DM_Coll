@@ -167,16 +167,14 @@ class UltrasonicSensor:
     def _read_once(self) -> Optional[float]:
         """
         Perform a single HC-SR04 distance measurement.
-
-        Timing sequence:
-          1. Hold TRIG LOW for ≥ 5 µs (settle)
-          2. Pulse TRIG HIGH for 10 µs
-          3. Back to LOW
-          4. Wait for ECHO HIGH (with timeout)
-          5. Measure ECHO HIGH duration (with timeout)
-          6. distance = (duration × speed_of_sound) / 2
+        Uses busy-wait loops for precise timing, as wait_for_edge can miss
+        the start of the echo pulse on fast Raspberry Pi boards.
         """
         try:
+            # Check for simulated readings (used by unit tests)
+            if hasattr(self, "_sim") and hasattr(self._sim, "read_raw"):
+                return self._sim.read_raw()
+
             GPIO.output(self.trig, GPIO.LOW)
             time.sleep(_SETTLE_TIME)
 
@@ -184,25 +182,26 @@ class UltrasonicSensor:
             time.sleep(_TRIG_PULSE)
             GPIO.output(self.trig, GPIO.LOW)
 
-            deadline  = time.time() + _TIMEOUT
-            max_iters = 50_000   # guard against busy-wait lockup
-
-            pulse_start = time.time()
-            iters = 0
-            while GPIO.input(self.echo) == 0:
-                pulse_start = time.time()
-                iters += 1
-                if pulse_start > deadline or iters > max_iters:
+            # 1. Wait for ECHO to go HIGH (start of pulse)
+            # -------------------------------------------
+            timeout_at = time.perf_counter() + _TIMEOUT
+            while GPIO.input(self.echo) == GPIO.LOW:
+                if time.perf_counter() > timeout_at:
+                    log.debug("Sensor [%s] timed out waiting for pulse start.", self.name)
                     return None
+                time.sleep(0.0001)   # Yield CPU to other threads (100 µs)
+            pulse_start = time.perf_counter()
 
-            pulse_end = pulse_start
-            deadline  = pulse_start + _TIMEOUT
-            iters     = 0
-            while GPIO.input(self.echo) == 1:
-                pulse_end = time.time()
-                iters += 1
-                if pulse_end > deadline or iters > max_iters:
+            # 2. Wait for ECHO to go LOW (end of pulse)
+            # -----------------------------------------
+            # Pulse length is proportional to distance. Max duration ~ 23ms for 400cm.
+            timeout_at = time.perf_counter() + _TIMEOUT
+            while GPIO.input(self.echo) == GPIO.HIGH:
+                if time.perf_counter() > timeout_at:
+                    log.debug("Sensor [%s] timed out waiting for pulse end.", self.name)
                     return None
+                time.sleep(0.0001)   # Yield CPU to other threads (100 µs)
+            pulse_end = time.perf_counter()
 
             duration = pulse_end - pulse_start
             if duration <= 0:
@@ -211,7 +210,7 @@ class UltrasonicSensor:
             return (duration * _SPEED) / 2.0
 
         except Exception as exc:
-            log.debug("Sensor [%s] read error: %s", self.name, exc)
+            log.error("Sensor [%s] hardware error: %s", self.name, exc)
             return None
 
 

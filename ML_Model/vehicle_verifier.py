@@ -38,11 +38,9 @@ class UnifiedVehicleThreatEngine(MLThreatEngine):
     before passing data to the ML prediction pipeline.
     """
 
-    def __init__(self, leds, motors) -> None:
-        # Override and initialise directly to satisfy strict typing
-        self._leds = leds
-        self._motors = motors
-        super().__init__()
+    def __init__(self, leds: "LEDController", motors: "MotorController") -> None:
+        """Initialise the two-stage ML engine."""
+        super().__init__(leds=leds, motors=motors)
         log.info("UnifiedVehicleThreatEngine initialised (Two-Stage: YOLO → LSTM).")
 
     def evaluate(

@@ -38,9 +38,8 @@ log = logging.getLogger(__name__)
 
 app      = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["SECRET_KEY"] = "blind-spot-secret-2025"
-# Allow SocketIO to auto-detect eventlet (which is in requirements.txt)
-# to avoid the Werkzeug 3.0 dev server 'assert status_set is not None' bug.
-socketio = SocketIO(app, cors_allowed_origins="*")
+# Use threading async mode for better compatibility with real-time hardware threads.
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Shared references injected by main.py after startup
 _evaluator: Optional["ZoneEvaluator"] = None
@@ -161,6 +160,12 @@ def on_connect(*args, **kwargs):
                     emit("camera_frame", _sanitize(frame.to_dict()))
     except Exception as exc:
         log.error("Error in on_connect: %s", exc)
+
+
+@socketio.on("ping_latency")
+def on_ping_latency(timestamp):
+    """Echo back the timestamp for latency measurement."""
+    return timestamp
 
 
 @socketio.on("disconnect")

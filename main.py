@@ -174,7 +174,7 @@ def main() -> None:
     log.info("[1/5] Initialising ultrasonic sensors…")
     _ultra_manager = UltrasonicManager()
     _ultra_manager.start()
-    time.sleep(0.3)   # Allow sensors to stabilise and gather initial readings
+    time.sleep(0.8)   # Allow sensors to stabilise and gather initial readings (5 readings × 60ms = 300ms min)
 
     # ── 2. Cameras ───────────────────────────────────────────────────────────
     log.info("[2/5] Initialising cameras…")

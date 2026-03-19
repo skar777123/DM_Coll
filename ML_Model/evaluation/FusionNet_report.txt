@@ -1,0 +1,12 @@
+FusionNet
+────────────────────────────────────────
+              precision    recall  f1-score   support
+
+        safe     0.9762    0.9371    0.9562       699
+     caution     0.5033    0.9872    0.6667       156
+    critical     0.9552    0.6174    0.7500       345
+
+    accuracy                         0.8517      1200
+   macro avg     0.8115    0.8472    0.7910      1200
+weighted avg     0.9086    0.8517    0.8593      1200
+

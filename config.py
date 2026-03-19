@@ -143,7 +143,7 @@ DASHBOARD = {
     "host":      "0.0.0.0",
     "port":      5000,
     "debug":     False,
-    "emit_rate": 0.05,   # 20 Hz dashboard update
+    "emit_rate": 0.1,   # 10 Hz dashboard update
 }
 
 # ──────────────────────────────────────────────────────────────
