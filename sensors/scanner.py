@@ -3,37 +3,64 @@ scanner.py
 ──────────
 Network utility to auto-discover ESP32-CAMs.
 
-Discovery strategies (in order of priority):
-  1. mDNS:         Find cameras by hostname (blindspot-left.local, etc.)
-  2. Direct probe: Try configured static IPs from config.py
-  3. /id endpoint:  Query discovered cameras for their position identity
-  4. nmap scan:     Full subnet scan as last resort
-
-The /id endpoint on ESP32-CAMs returns JSON: {"position": "left", "ip": "...", "hostname": "..."}
-This allows automatic position mapping even when IPs change.
+Logic:
+1. Fetch IP of the Raspberry Pi.
+2. Exclude the IP of the gateway, Raspberry Pi IP, and network IP.
+3. Detect the IP of the range in which the Raspberry IP is connected.
+4. Using nmap, fetch the IP of the ESP32 cam.
+5. Assign it using the /id endpoint to fetch the camera visuals.
 """
 
+import os
 import socket
 import logging
 import subprocess
-import requests
-import time
-from typing import Dict, List, Optional
+from typing import Optional, Iterable, Set, Dict, Tuple
+from urllib.parse import urlparse
 
-from config import CAMERA_PORTS
+import requests
 
 log = logging.getLogger(__name__)
 
-# mDNS hostnames for each camera position
-MDNS_HOSTNAMES = {
-    "left":  "blindspot-left.local",
-    "right": "blindspot-right.local",
-    "rear":  "blindspot-rear.local",
-}
+
+def _get_expected_positions() -> Set[str]:
+    try:
+        from config import CAMERA_PORTS  # type: ignore
+        if isinstance(CAMERA_PORTS, dict) and CAMERA_PORTS:
+            return {str(k) for k in CAMERA_PORTS.keys()}
+    except Exception:
+        pass
+    return {"left", "right", "rear"}
 
 
-def get_local_subnet() -> str:
-    """Helper to guess the local subnet (e.g., 192.168.1.0/24)."""
+def _get_candidate_http_ports() -> Set[int]:
+    """
+    Derive ports to scan from config CAMERA_PORTS URLs when available.
+    Defaults to {80} which is typical for ESP32-CAM sketches.
+    """
+    ports: Set[int] = {80}
+    try:
+        from config import CAMERA_PORTS  # type: ignore
+        if isinstance(CAMERA_PORTS, dict):
+            for cfg in CAMERA_PORTS.values():
+                if not isinstance(cfg, dict):
+                    continue
+                url = cfg.get("url")
+                if not isinstance(url, str) or not url:
+                    continue
+                try:
+                    p = urlparse(url).port
+                    if p:
+                        ports.add(int(p))
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return ports
+
+
+def get_local_ip() -> str:
+    """Fetch the IP of the Raspberry Pi / Host Machine."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(('10.255.255.255', 1))
@@ -42,138 +69,111 @@ def get_local_subnet() -> str:
         ip = '127.0.0.1'
     finally:
         s.close()
-        
-    parts = ip.split('.')
-    if len(parts) == 4 and parts[0] != '127':
-        return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
-    return "192.168.1.0/24"
+    return ip
 
 
-def _resolve_mdns(hostname: str) -> Optional[str]:
-    """Resolve an mDNS hostname to an IP address."""
+def get_gateway_ip() -> str:
+    """Fetch the IP of the Default Gateway to exclude it."""
     try:
-        ip = socket.gethostbyname(hostname)
-        return ip
-    except socket.gaierror:
-        return None
+        if os.name == 'nt':
+            # Windows fallback
+            out = subprocess.check_output(["route", "print", "0.0.0.0"], text=True)
+            for line in out.split('\n'):
+                parts = line.split()
+                if len(parts) >= 3 and parts[0] == "0.0.0.0":
+                    return parts[2]
+        else:
+            # Linux (Raspberry Pi)
+            with open("/proc/net/route") as fh:
+                for line in fh:
+                    fields = line.strip().split()
+                    if len(fields) > 3 and fields[1] == '00000000' and int(fields[3], 16) & 2:
+                        import struct
+                        return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+    except Exception as e:
+        log.warning(f"Failed to get gateway IP: {e}")
+    return ""
 
 
-def _probe_stream(url: str, timeout: float = 3.0) -> bool:
-    """Test if a URL serves a valid MJPEG stream or JPEG image."""
-    try:
-        res = requests.get(url, stream=True, timeout=timeout)
-        ok = res.status_code == 200
-        res.close()
-        return ok
-    except Exception:
-        return False
-
-
-def _query_camera_id(ip: str, timeout: float = 2.0) -> Optional[str]:
+def _query_camera_id(ip: str, timeout: float = 3.0) -> Optional[str]:
     """
-    Query the /id endpoint on an ESP32-CAM to get its position.
+    Query the /id endpoint on the ESP32-CAM to get its assigned visual position.
     Returns the position string ('left', 'right', 'rear') or None.
     """
+    res = None
     try:
-        res = requests.get(f"http://{ip}/id", timeout=timeout)
+        # Use a connect/read timeout pair for better behavior on flaky WiFi.
+        res = requests.get(f"http://{ip}/id", timeout=(timeout, timeout))
         if res.status_code == 200:
             data = res.json()
             position = data.get("position")
             if position in ("left", "right", "rear"):
-                log.info("[Scanner] Camera at %s identifies as: %s", ip, position)
                 return position
     except Exception:
         pass
+    finally:
+        try:
+            if res is not None:
+                res.close()
+        except Exception:
+            pass
     return None
 
 
-def discover_esp32_cameras() -> Dict[str, str]:
+def discover_esp32_cameras() -> dict:
     """
-    Discover ESP32-CAMs on the network using a multi-phase approach:
-    
-    Phase 1: mDNS resolution (fastest, most reliable if ESP32 supports it)
-    Phase 2: Direct probe configured IPs from config.py
-    Phase 3: nmap scan + /id endpoint query for unknown cameras
-    
-    Returns: Dict mapping 'left', 'right', 'rear' to their stream URLs.
+    Implements the requested logic:
+    1. Fetch Pi IP
+    2. Exclude Gateway, Pi IP, Network IP
+    3. Nmap scan the subnet range
+    4. Fetch /id to assign visuals
     """
     mappings: Dict[str, str] = {}
-    all_positions = set(CAMERA_PORTS.keys())  # {'left', 'right', 'rear'}
-
-    # ── Phase 1: mDNS Discovery ──────────────────────────────────────────────
-    log.info("[Scanner] Phase 1: Trying mDNS resolution...")
     
-    for position, hostname in MDNS_HOSTNAMES.items():
-        ip = _resolve_mdns(hostname)
-        if ip:
-            url = f"http://{ip}/stream"
-            if _probe_stream(url, timeout=2.0):
-                log.info("[Scanner]   ✔ %s → %s (%s)", position.upper(), url, hostname)
-                mappings[position] = url
-            else:
-                log.warning("[Scanner]   mDNS resolved %s → %s but stream not responding", hostname, ip)
-        else:
-            log.debug("[Scanner]   mDNS: %s not found", hostname)
-
-    if len(mappings) == len(all_positions):
-        log.info("[Scanner] All cameras found via mDNS!")
+    local_ip = get_local_ip()
+    gateway_ip = get_gateway_ip()
+    
+    if local_ip == '127.0.0.1':
+        log.error("[Scanner] Could not determine local IP. Network offline.")
         return mappings
-
-    missing = all_positions - set(mappings.keys())
-    
-    # ── Phase 2: Direct probe configured IPs ─────────────────────────────────
-    log.info("[Scanner] Phase 2: Probing configured IPs for %d missing camera(s)...", len(missing))
-    
-    for position in list(missing):
-        cfg = CAMERA_PORTS.get(position, {})
-        url = cfg.get("url")
-        if not url:
-            continue
         
-        log.info("[Scanner]   Probing %s → %s", position.upper(), url)
-        if _probe_stream(url, timeout=3.0):
-            log.info("[Scanner]   ✔ %s camera ONLINE at configured IP", position.upper())
-            mappings[position] = url
-            missing.discard(position)
-        else:
-            log.warning("[Scanner]   ✘ %s camera NOT at configured IP", position.upper())
+    base_ip = local_ip.rsplit('.', 1)[0]
+    network_ip = f"{base_ip}.0"
+    broadcast_ip = f"{base_ip}.255"
+    target_range = f"{base_ip}.0/24"
 
-    if not missing:
-        log.info("[Scanner] All cameras found via direct probe.")
-        return mappings
-
-    # ── Phase 3: nmap scan + /id endpoint ────────────────────────────────────
-    log.info("[Scanner] Phase 3: %d camera(s) still missing. Running nmap scan...", len(missing))
+    expected_positions = _get_expected_positions()
+    scan_ports = sorted(_get_candidate_http_ports())
+    scan_ports_arg = ",".join(str(p) for p in scan_ports)
     
-    known_ips = set()
-    for url in mappings.values():
-        try:
-            from urllib.parse import urlparse
-            known_ips.add(urlparse(url).hostname)
-        except Exception:
-            pass
-
-    subnet = get_local_subnet()
-    log.info("[Scanner] Scanning subnet %s for port 80...", subnet)
+    # ── Exclude IP of gateway, Raspberry Pi IP, and network IP ───────────────
+    excludes = [local_ip, network_ip, broadcast_ip]
+    if gateway_ip:
+        excludes.append(gateway_ip)
+        
+    exclude_str = ",".join(excludes)
     
-    candidate_ips: List[str] = []
+    log.info("[Scanner] Host IP: %s | Gateway: %s", local_ip, gateway_ip)
+    log.info("[Scanner] Scanning range: %s ports=%s (Excluding: %s)", target_range, scan_ports_arg, exclude_str)
     
+    candidate_ips = []
     try:
+        # ── Using nmap to fetch IPs ───────────────────────────────────────────
         result = subprocess.check_output(
-            ["nmap", "-p", "80", "--open", "-oG", "-", subnet], 
+            ["nmap", "-p", scan_ports_arg, "--open", "--exclude", exclude_str, "-oG", "-", target_range],
             stderr=subprocess.STDOUT, 
-            timeout=30,
+            timeout=45,
             text=True
         )
-        
         for line in result.split("\n"):
-            if "Host:" in line and "Ports: 80/open/tcp" in line:
+            # Grepable output example:
+            # Host: 192.168.1.10 ()  Ports: 80/open/tcp//http///, 443/closed/tcp//https///
+            if "Host:" in line and "Ports:" in line and "/open/tcp" in line:
                 ip = line.split("Host: ")[1].split(" ")[0]
-                if ip not in known_ips:
-                    candidate_ips.append(ip)
-                    
+                candidate_ips.append(ip)
+                
     except FileNotFoundError:
-        log.error("[Scanner] nmap not found! Install with: sudo apt install nmap")
+        log.error("[Scanner] nmap not found! Install it (Linux: sudo apt install nmap, Windows: install Nmap).")
         return mappings
     except subprocess.TimeoutExpired:
         log.error("[Scanner] nmap scan timed out.")
@@ -182,42 +182,30 @@ def discover_esp32_cameras() -> Dict[str, str]:
         log.error("[Scanner] nmap error: %s", exc)
         return mappings
 
-    log.info("[Scanner] Found %d candidate IPs to check.", len(candidate_ips))
+    log.info("[Scanner] Found %d candidate web servers in range: %s", len(candidate_ips), candidate_ips)
     
-    # Try /id endpoint on each candidate to identify its position
-    unidentified_urls = []
+    # ── Assign it from where it will get the visuals (via /id) ────────────────
+    missing = set(expected_positions)
     
     for ip in candidate_ips:
-        stream_url = f"http://{ip}/stream"
-        if not _probe_stream(stream_url, timeout=2.0):
-            continue
+        if not missing:
+            break
             
-        log.info("[Scanner] Stream found at %s — checking /id ...", ip)
+        stream_url = f"http://{ip}/stream"
         
-        # Try the /id endpoint for smart identification
-        position = _query_camera_id(ip, timeout=2.0)
+        position = _query_camera_id(ip, timeout=3.0)
+        
         if position and position in missing:
             mappings[position] = stream_url
-            missing.discard(position)
-            log.info("[Scanner]   ✔ Identified as %s camera!", position.upper())
+            missing.remove(position)
+            log.info("[Scanner]   ✔ IP %s identifies as '%s' camera! Assigned visuals.", ip, position.upper())
         elif position:
-            log.info("[Scanner]   Camera identifies as %s but that position is already mapped.", position)
+            log.info("[Scanner]   IP %s identifies as '%s' but already mapped.", ip, position)
         else:
-            # No /id endpoint — save for fallback assignment
-            unidentified_urls.append(stream_url)
-            log.info("[Scanner]   No /id endpoint — will assign by order")
-    
-    # Assign any remaining unidentified cameras to missing positions
-    for pos in sorted(missing):
-        if unidentified_urls:
-            url = unidentified_urls.pop(0)
-            mappings[pos] = url
-            log.info("[Scanner] Assigned %s → %s (by order, no /id)", pos.upper(), url)
-    
-    log.info("[Scanner] Final result: %d/%d cameras mapped.", len(mappings), len(CAMERA_PORTS))
-    
-    if len(mappings) < len(all_positions):
-        missing_str = ", ".join(all_positions - set(mappings.keys()))
-        log.warning("[Scanner] Missing cameras: %s — check power and WiFi!", missing_str)
+            log.debug("[Scanner]   IP %s is not an ESP32 camera (no /id endpoint).", ip)
+            
+    if missing:
+        log.warning("[Scanner] Missing cameras after scan: %s", ", ".join(missing))
     
     return mappings
+
