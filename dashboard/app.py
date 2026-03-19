@@ -38,7 +38,9 @@ log = logging.getLogger(__name__)
 
 app      = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["SECRET_KEY"] = "blind-spot-secret-2025"
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+# Allow SocketIO to auto-detect eventlet (which is in requirements.txt)
+# to avoid the Werkzeug 3.0 dev server 'assert status_set is not None' bug.
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Shared references injected by main.py after startup
 _evaluator: Optional["ZoneEvaluator"] = None
@@ -217,7 +219,7 @@ def _emit_loop() -> None:
         except Exception as exc:
             log.debug("Emit loop error: %s", exc)
 
-        time.sleep(interval)
+        socketio.sleep(interval)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
