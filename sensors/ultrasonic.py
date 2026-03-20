@@ -176,10 +176,12 @@ class UltrasonicSensor:
                 return self._sim.read_raw()
 
             GPIO.output(self.trig, GPIO.LOW)
-            time.sleep(_SETTLE_TIME)
+            t_start = time.perf_counter()
+            while time.perf_counter() - t_start < _SETTLE_TIME: pass
 
             GPIO.output(self.trig, GPIO.HIGH)
-            time.sleep(_TRIG_PULSE)
+            t_start = time.perf_counter()
+            while time.perf_counter() - t_start < _TRIG_PULSE: pass
             GPIO.output(self.trig, GPIO.LOW)
 
             # 1. Wait for ECHO to go HIGH (start of pulse)

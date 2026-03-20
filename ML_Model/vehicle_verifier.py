@@ -90,6 +90,12 @@ class UnifiedVehicleThreatEngine(MLThreatEngine):
         ml_zones: Optional[List[str]]  = None
         ml_ttcs:  Optional[List[float]] = None
 
+        if self._lstm is not None and self._history.ready:
+            ml_zones, ml_ttcs = self._lstm_predict()
+
+        if ml_zones is None and self._fnet is not None:
+            ml_zones, ml_ttcs = self._fnet_predict()
+
         ml_zones = ml_zones or []
         ml_ttcs  = ml_ttcs or []
         
@@ -113,9 +119,9 @@ class UnifiedVehicleThreatEngine(MLThreatEngine):
             u_threat  = vel > 150.0
 
             # ML threat: imminent crash (TTC ≤ threshold) or ML classified critical
-            ml_threat = (ttc <= THRESHOLDS["ttc_critical"] or p_zone == "critical")
+            ml_threat = bool(ttc <= THRESHOLDS["ttc_critical"]) or (p_zone == "critical")
 
-            is_fast_approach = c_threat or u_threat or ml_threat
+            is_fast_approach = bool(c_threat or u_threat or ml_threat)
 
             # Final zone decision (mirrors ZoneEvaluator safety logic):
             if is_v and is_fast_approach and dist <= ZONE["critical"]:

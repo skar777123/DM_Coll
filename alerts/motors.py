@@ -109,17 +109,20 @@ class VibrationMotor:
 
     def _pulse_loop(self) -> None:
         half = _PULSE_PERIOD / 2
-        while True:
-            with self._lock:
-                if self._state != "pulse":
-                    break
-            self._set_duty(_DUTY_CRITICAL)
-            time.sleep(half)
-            with self._lock:
-                if self._state != "pulse":
-                    break
+        try:
+            while True:
+                with self._lock:
+                    if self._state != "pulse":
+                        break
+                self._set_duty(_DUTY_CRITICAL)
+                time.sleep(half)
+                with self._lock:
+                    if self._state != "pulse":
+                        break
+                self._set_duty(0)
+                time.sleep(half)
+        finally:
             self._set_duty(0)
-            time.sleep(half)
 
     def _set_duty(self, duty: int) -> None:
         self._sim_active = duty > 0

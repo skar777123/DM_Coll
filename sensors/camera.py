@@ -270,6 +270,8 @@ class CameraStream:
                         while True:
                             soi_pos = bytes_data.find(_SOI)
                             if soi_pos == -1:
+                                if len(bytes_data) > 0:
+                                    bytes_data = bytes_data[-1:]
                                 break
                             if soi_pos > 0:
                                 bytes_data = bytes_data[soi_pos:]
