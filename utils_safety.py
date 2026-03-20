@@ -29,7 +29,7 @@ def is_module_safe(module_name: str) -> bool:
         result = subprocess.run(
             [sys.executable, "-c", f"import {module_name}"],
             capture_output=True,
-            timeout=15,
+            timeout=60,
         )
         if result.returncode == 0:
             return True

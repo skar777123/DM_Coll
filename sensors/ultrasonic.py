@@ -136,18 +136,21 @@ class UltrasonicSensor:
 
             raw = self._read_once()
 
-            if raw is not None and _MIN_VALID < raw < _MAX_DIST:
-                if self._last_valid_dist < _MAX_DIST:
-                    jump_ratio = abs(raw - self._last_valid_dist) / max(self._last_valid_dist, 1.0)
-                    if jump_ratio > _OUTLIER_JUMP and len(self._history) >= 2:
-                        log.debug(
-                            "Sensor [%s] outlier rejected: %.1f cm (prev=%.1f, jump=%.0f%%)",
-                            self.name, raw, self._last_valid_dist, jump_ratio * 100,
-                        )
+            if raw is not None:
+                if raw >= _MAX_DIST:
+                    self._accept_reading(_MAX_DIST)
+                elif raw > _MIN_VALID:
+                    if self._last_valid_dist < _MAX_DIST:
+                        jump_ratio = abs(raw - self._last_valid_dist) / max(self._last_valid_dist, 1.0)
+                        if jump_ratio > _OUTLIER_JUMP and len(self._history) >= 2:
+                            log.debug(
+                                "Sensor [%s] outlier rejected: %.1f cm (prev=%.1f, jump=%.0f%%)",
+                                self.name, raw, self._last_valid_dist, jump_ratio * 100,
+                            )
+                        else:
+                            self._accept_reading(raw)
                     else:
                         self._accept_reading(raw)
-                else:
-                    self._accept_reading(raw)
 
             # Enforce minimum 60 ms cycle time
             elapsed = time.time() - loop_start
@@ -199,8 +202,8 @@ class UltrasonicSensor:
             timeout_at = time.perf_counter() + _TIMEOUT
             while GPIO.input(self.echo) == GPIO.HIGH:
                 if time.perf_counter() > timeout_at:
-                    log.debug("Sensor [%s] timed out waiting for pulse end.", self.name)
-                    return None
+                    log.debug("Sensor [%s] timed out waiting for pulse end, returning MAX_DIST.", self.name)
+                    return _MAX_DIST
             pulse_end = time.perf_counter()
 
             duration = pulse_end - pulse_start
