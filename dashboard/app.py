@@ -38,8 +38,8 @@ log = logging.getLogger(__name__)
 
 app      = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["SECRET_KEY"] = "blind-spot-secret-2025"
-# Use threading async mode for better compatibility with real-time hardware threads.
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+# Use default async mode for better compatibility with gevent/eventlet if present.
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=None)
 
 # Shared references injected by main.py after startup
 _evaluator: Optional["ZoneEvaluator"] = None

@@ -1,3 +1,11 @@
+from __future__ import annotations
+
+try:
+    import eventlet
+    eventlet.monkey_patch()
+except ImportError:
+    pass
+
 """
 main.py
 ───────
@@ -18,8 +26,6 @@ Shutdown
 ────────
 Ctrl-C (SIGINT) or SIGTERM → graceful cleanup of GPIO, serial, and threads.
 """
-
-from __future__ import annotations
 
 import logging
 import logging.handlers

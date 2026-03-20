@@ -110,7 +110,7 @@ CAMERA = {
     "fps":          15,
     "yolo_model":   "yolov8n.pt",            # Nano model — practical on Pi
     "conf_thresh":  0.45,
-    "target_classes":  ["car", "truck", "motorcycle", "bus", "person", "bicycle"],
+    "target_classes":  ["car", "truck", "motorcycle", "bus", "bicycle"],
     "vehicle_classes": ["car", "truck", "motorcycle", "bus"],
     "approach_speed_thresh_px": 8,            # px/frame bbox growth to trigger caution
     "motion_thresh_px":         3,            # min px shift to count as "moving"
